@@ -1,0 +1,5 @@
+# Gerado por scripts/enable-https-letsencrypt.sh
+# Placeholder — será sobrescrito com o domínio real.
+:80 {
+        respond "Configure DOMAIN e rode enable-https-letsencrypt.sh" 503
+}

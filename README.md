@@ -79,7 +79,19 @@ curl -fsSL "https://raw.githubusercontent.com/Leandrofdx/ai-graylog/main/scripts
 
 No formulário AWS: Endpoint URL = `https://SEU_IP/api/mcp`
 
-> Cert self-signed pode ser rejeitado pela AWS. Se isso acontecer, use domínio + Let's Encrypt ou ALB+ACM.
+> Cert self-signed pode ser rejeitado pela AWS. Se isso acontecer, use domínio + Let's Encrypt:
+
+```bash
+# 1) Crie um DNS A: graylog.seudominio.com -> IP da EC2
+# 2) SG: libere TCP 80 e 443 (0.0.0.0/0)
+# 3) Na EC2:
+cd ~/ai-graylog && git pull
+export DOMAIN=graylog.seudominio.com
+export EMAIL=seu@email.com
+bash scripts/enable-https-letsencrypt.sh
+```
+
+MCP na AWS: `https://SEU_DOMINIO/api/mcp`
 
 ## Parar
 

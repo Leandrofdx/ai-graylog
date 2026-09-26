@@ -110,6 +110,25 @@ services:
       - ./nginx/certs:/etc/nginx/certs:ro
     profiles: ["https"]
 
+  caddy:
+    image: caddy:2.9-alpine
+    container_name: graylog-caddy
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      graylog:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    profiles: ["https-le"]
+
   graylog-init:
     image: curlimages/curl:8.12.1
     container_name: graylog-init
@@ -159,3 +178,5 @@ volumes:
   mongodb_config:
   opensearch_data:
   graylog_data:
+  caddy_data:
+  caddy_config:
