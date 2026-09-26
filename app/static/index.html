@@ -3,58 +3,119 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LabOps Assistant</title>
+  <title>Assistente Colombo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
-  <div class="shell">
-    <aside class="rail">
+  <div class="app">
+    <header class="appbar">
+      <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="logo" aria-hidden="true"></div>
         <div>
-          <div class="brand-name">LabOps</div>
-          <div class="brand-sub">Assistant</div>
+          <strong>Assistente</strong>
+          <span>Colombo · lab</span>
         </div>
       </div>
-      <button type="button" class="btn-new" id="btnNew">Nova investigação</button>
-      <div class="rail-label">Conversas</div>
-      <nav class="conv-list" id="convList"></nav>
-      <div class="rail-foot">
-        <div class="pill">Graylog + Jaeger</div>
-        <div class="muted">Observabilidade free · lab</div>
+      <div class="appbar-right" id="userChip">Faça login</div>
+    </header>
+
+    <aside class="drawer" id="drawer">
+      <div class="drawer-head">
+        <div class="persona"></div>
+        <div>
+          <div id="drawerName">Assistente Colombo</div>
+          <small id="drawerSub">Realize o login</small>
+        </div>
       </div>
+      <nav>
+        <button type="button" data-view="home" class="nav active">Início</button>
+        <button type="button" data-view="products" class="nav">Produtos</button>
+        <button type="button" data-view="stock" class="nav">Estoque</button>
+        <button type="button" data-view="customer" class="nav">Cliente</button>
+        <button type="button" data-view="cart" class="nav">Carrinho / Pré-venda</button>
+        <button type="button" data-view="lia" class="nav">IA Colombo</button>
+      </nav>
+      <button type="button" class="login-btn" id="btnLoginToggle">Login</button>
     </aside>
+    <div class="backdrop" id="backdrop"></div>
 
-    <main class="stage">
-      <header class="top">
-        <div>
-          <h1 id="chatTitle">Agent Space</h1>
-          <p class="muted">Correlacione carga, logs e traces como o DevOps Agent.</p>
-        </div>
-        <div class="top-meta" id="metaBox">
-          <span class="chip">pronto</span>
-        </div>
-      </header>
-
-      <section class="transcript" id="transcript">
-        <div class="welcome">
-          <h2>Como posso ajudar na investigação?</h2>
-          <p>Pergunte sobre erros, status do Graylog, pool do Postgres ou traces.</p>
-          <div class="suggestions">
-            <button type="button" data-q="Qual o status do sistema e do Graylog?">Status do sistema</button>
-            <button type="button" data-q="Mostre erros e timeouts recentes nos logs">Erros recentes</button>
-            <button type="button" data-q="Como está o banco e o pool sob carga?">Stats do banco</button>
-          </div>
+    <main class="content">
+      <section class="view" id="view-home">
+        <div class="welcome card">
+          <img class="welcome-mark" alt="" />
+          <h1>Bem-vindo ao Assistente!</h1>
+          <p>Pesquise por produtos, consulte estoque e muito mais.</p>
+          <p class="dim">Faça login para ter acesso a todas as funcionalidades.</p>
+          <button type="button" class="btn-primary" id="btnWelcomeLogin">Fazer login</button>
         </div>
       </section>
 
-      <form class="composer" id="composer">
-        <textarea id="input" rows="1" placeholder="Descreva o sintoma ou pergunte sobre logs/traces…" required></textarea>
-        <button type="submit" id="send">Enviar</button>
-      </form>
+      <section class="view hidden" id="view-login">
+        <div class="card narrow">
+          <h2>Login do vendedor</h2>
+          <label>Staff ID<input id="staffId" value="vendedor1" /></label>
+          <label>Senha<input id="password" type="password" value="lab123" /></label>
+          <button type="button" class="btn-primary" id="btnLogin">Entrar</button>
+          <p class="hint">Lab: vendedor1 / lab123</p>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-products">
+        <div class="card">
+          <h2>Produtos</h2>
+          <div class="row">
+            <input id="productQuery" placeholder="Buscar por nome ou código…" />
+            <button type="button" class="btn-primary" id="btnSearch">Buscar</button>
+          </div>
+          <div class="grid" id="productGrid"></div>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-stock">
+        <div class="card narrow">
+          <h2>Consulta de estoque</h2>
+          <label>Item ID<input id="stockItem" value="SKU-42" /></label>
+          <button type="button" class="btn-primary" id="btnStock">Consultar</button>
+          <pre class="result" id="stockResult"></pre>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-customer">
+        <div class="card narrow">
+          <h2>Cliente</h2>
+          <label>CPF<input id="cpf" value="52998224725" /></label>
+          <button type="button" class="btn-primary" id="btnCustomer">Buscar</button>
+          <pre class="result" id="customerResult"></pre>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-cart">
+        <div class="card">
+          <h2>Carrinho / Pré-venda</h2>
+          <div class="row wrap">
+            <label>Item<input id="cartItem" value="SKU-42" /></label>
+            <label>Qtd<input id="cartQty" type="number" min="1" value="1" /></label>
+            <label>CPF<input id="cartCpf" value="52998224725" /></label>
+          </div>
+          <button type="button" class="btn-primary" id="btnPreSale" disabled>Criar pré-venda</button>
+          <pre class="result" id="saleResult"></pre>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-lia">
+        <div class="card chat-card">
+          <h2>IA Colombo</h2>
+          <div class="chat" id="chatBox"></div>
+          <form class="chat-form" id="chatForm">
+            <input id="chatInput" placeholder="Pergunte sobre produto, estoque ou cliente…" required />
+            <button type="submit" class="btn-primary">Enviar</button>
+          </form>
+        </div>
+      </section>
     </main>
   </div>
   <script src="/static/app.js"></script>

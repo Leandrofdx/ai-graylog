@@ -1,145 +1,182 @@
-const transcript = document.getElementById("transcript");
-const composer = document.getElementById("composer");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const convList = document.getElementById("convList");
-const chatTitle = document.getElementById("chatTitle");
-const metaBox = document.getElementById("metaBox");
-const btnNew = document.getElementById("btnNew");
+const state = {
+  token: localStorage.getItem("lab_token") || "",
+  staffId: localStorage.getItem("lab_staff") || "",
+  name: localStorage.getItem("lab_name") || "",
+  storeId: localStorage.getItem("lab_store") || "",
+};
 
-let conversationId = null;
+const drawer = document.getElementById("drawer");
+const backdrop = document.getElementById("backdrop");
+const userChip = document.getElementById("userChip");
+const drawerName = document.getElementById("drawerName");
+const drawerSub = document.getElementById("drawerSub");
+const btnPreSale = document.getElementById("btnPreSale");
 
-function el(tag, cls, text) {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
+function headers(json = true) {
+  const h = {
+    "X-Request-Id": crypto.randomUUID(),
+    "X-Test-Run-Id": window.__TEST_RUN_ID || `ui-${Date.now()}`,
+  };
+  if (json) h["Content-Type"] = "application/json";
+  if (state.staffId) h["X-Staff-Id"] = state.staffId;
+  if (state.token) h["Authorization"] = `Bearer ${state.token}`;
+  return h;
 }
 
-function clearWelcome() {
-  const w = transcript.querySelector(".welcome");
-  if (w) w.remove();
+function setSession(data) {
+  state.token = data.token || "";
+  state.staffId = data.staffId || "";
+  state.name = data.name || "";
+  state.storeId = data.storeId || "";
+  localStorage.setItem("lab_token", state.token);
+  localStorage.setItem("lab_staff", state.staffId);
+  localStorage.setItem("lab_name", state.name);
+  localStorage.setItem("lab_store", state.storeId);
+  refreshChrome();
 }
 
-function addBubble(role, content, traceId) {
-  clearWelcome();
-  const box = el("article", `bubble ${role}`);
-  box.appendChild(el("div", "role", role));
-  box.appendChild(document.createTextNode(content));
-  if (traceId) {
-    const t = el("div", "trace", `trace_id ${traceId}`);
-    box.appendChild(t);
-  }
-  transcript.appendChild(box);
-  transcript.scrollTop = transcript.scrollHeight;
+function clearSession() {
+  setSession({});
 }
 
-async function refreshConversations() {
-  const res = await fetch("/api/conversations");
-  if (!res.ok) return;
-  const data = await res.json();
-  convList.innerHTML = "";
-  for (const c of data.conversations || []) {
-    const b = el("button", "conv-item" + (c.id === conversationId ? " active" : ""), c.title);
-    b.type = "button";
-    b.addEventListener("click", () => openConversation(c.id));
-    convList.appendChild(b);
-  }
+function refreshChrome() {
+  const logged = Boolean(state.token);
+  userChip.textContent = logged ? `${state.name} · loja ${state.storeId}` : "Faça login";
+  drawerName.textContent = logged ? state.name : "Assistente Colombo";
+  drawerSub.textContent = logged ? "Vendedor" : "Realize o login";
+  document.getElementById("btnLoginToggle").textContent = logged ? "Sair" : "Login";
+  btnPreSale.disabled = !logged;
 }
 
-async function openConversation(id) {
-  const res = await fetch(`/api/conversations/${id}`);
-  if (!res.ok) return;
-  const data = await res.json();
-  conversationId = id;
-  chatTitle.textContent = data.conversation.title || "Investigação";
-  transcript.innerHTML = "";
-  for (const m of data.messages || []) {
-    addBubble(m.role, m.content, m.trace_id);
-  }
-  refreshConversations();
+function showView(name) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+  document.getElementById(`view-${name}`).classList.remove("hidden");
+  document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("active", n.dataset.view === name));
+  closeMenu();
 }
 
-function newChat() {
-  conversationId = null;
-  chatTitle.textContent = "Agent Space";
-  transcript.innerHTML = "";
-  const welcome = document.createElement("div");
-  welcome.className = "welcome";
-  welcome.innerHTML = `
-    <h2>Como posso ajudar na investigação?</h2>
-    <p>Pergunte sobre erros, status do Graylog, pool do Postgres ou traces.</p>
-    <div class="suggestions">
-      <button type="button" data-q="Qual o status do sistema e do Graylog?">Status do sistema</button>
-      <button type="button" data-q="Mostre erros e timeouts recentes nos logs">Erros recentes</button>
-      <button type="button" data-q="Como está o banco e o pool sob carga?">Stats do banco</button>
-    </div>`;
-  transcript.appendChild(welcome);
-  welcome.querySelectorAll("[data-q]").forEach((b) =>
-    b.addEventListener("click", () => {
-      input.value = b.getAttribute("data-q");
-      composer.requestSubmit();
-    })
-  );
-  refreshConversations();
+function openMenu() {
+  drawer.classList.add("open");
+  backdrop.classList.add("show");
+}
+function closeMenu() {
+  drawer.classList.remove("open");
+  backdrop.classList.remove("show");
 }
 
-composer.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const message = input.value.trim();
-  if (!message) return;
-  addBubble("user", message);
-  input.value = "";
-  sendBtn.disabled = true;
-  metaBox.innerHTML = '<span class="chip">investigando…</span>';
-
-  const testRunId = window.__TEST_RUN_ID || `ui-${Date.now()}`;
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Request-Id": crypto.randomUUID(),
-        "X-Test-Run-Id": testRunId,
-      },
-      body: JSON.stringify({ message, conversation_id: conversationId }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      addBubble("assistant", `Falha: ${data.error || res.status}`);
-      metaBox.innerHTML = '<span class="chip">erro</span>';
-      return;
-    }
-    conversationId = data.conversation_id;
-    for (const t of data.tools || []) {
-      addBubble("tool", JSON.stringify(t, null, 2), data.trace_id);
-    }
-    addBubble("assistant", data.reply, data.trace_id);
-    metaBox.innerHTML = `<span class="chip">trace ${ (data.trace_id || "").slice(0, 12) }…</span>`;
-    chatTitle.textContent = message.length > 48 ? message.slice(0, 45) + "…" : message;
-    refreshConversations();
-  } catch (err) {
-    addBubble("assistant", `Erro de rede: ${err}`);
-    metaBox.innerHTML = '<span class="chip">offline</span>';
-  } finally {
-    sendBtn.disabled = false;
-    input.focus();
-  }
-});
-
-btnNew.addEventListener("click", newChat);
-document.querySelectorAll("[data-q]").forEach((b) =>
-  b.addEventListener("click", () => {
-    input.value = b.getAttribute("data-q");
-    composer.requestSubmit();
-  })
+document.getElementById("btnMenu").addEventListener("click", openMenu);
+backdrop.addEventListener("click", closeMenu);
+document.querySelectorAll(".nav").forEach((btn) =>
+  btn.addEventListener("click", () => showView(btn.dataset.view))
 );
 
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    composer.requestSubmit();
+document.getElementById("btnWelcomeLogin").addEventListener("click", () => showView("login"));
+document.getElementById("btnLoginToggle").addEventListener("click", () => {
+  if (state.token) {
+    clearSession();
+    showView("home");
+  } else {
+    showView("login");
   }
 });
 
-refreshConversations();
+document.getElementById("btnLogin").addEventListener("click", async () => {
+  const staffId = document.getElementById("staffId").value.trim();
+  const password = document.getElementById("password").value;
+  const res = await fetch("/UserAuthentication/api/Authorize", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ staffId, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.message || data.error || "Falha no login");
+    return;
+  }
+  setSession(data);
+  showView("products");
+  searchProducts();
+});
+
+async function searchProducts() {
+  const q = document.getElementById("productQuery").value.trim();
+  const res = await fetch(`/Products/api/Products/Search?q=${encodeURIComponent(q)}`, { headers: headers(false) });
+  const data = await res.json();
+  const grid = document.getElementById("productGrid");
+  grid.innerHTML = "";
+  for (const p of data.products || []) {
+    const card = document.createElement("article");
+    card.className = "product";
+    card.innerHTML = `
+      <h3>${p.name}</h3>
+      <div class="price">R$ ${Number(p.price).toFixed(2)}</div>
+      <div class="stock">Estoque: ${p.stock} · ${p.itemId}</div>
+      <button type="button" class="btn-primary">Add carrinho</button>`;
+    card.querySelector("button").addEventListener("click", () => {
+      document.getElementById("cartItem").value = p.itemId;
+      showView("cart");
+    });
+    grid.appendChild(card);
+  }
+}
+document.getElementById("btnSearch").addEventListener("click", searchProducts);
+
+document.getElementById("btnStock").addEventListener("click", async () => {
+  const itemId = document.getElementById("stockItem").value.trim();
+  const res = await fetch(`/Stock/api/Stock/Find?itemId=${encodeURIComponent(itemId)}`, { headers: headers(false) });
+  const data = await res.json();
+  document.getElementById("stockResult").textContent = JSON.stringify(data, null, 2);
+});
+
+document.getElementById("btnCustomer").addEventListener("click", async () => {
+  const cpf = document.getElementById("cpf").value.trim();
+  const res = await fetch(`/Customer/api/Customer/FindByCpfCnpj?cpf=${encodeURIComponent(cpf)}`, {
+    headers: headers(false),
+  });
+  const data = await res.json();
+  document.getElementById("customerResult").textContent = JSON.stringify(data, null, 2);
+  if (res.ok) document.getElementById("cartCpf").value = data.cpf;
+});
+
+document.getElementById("btnPreSale").addEventListener("click", async () => {
+  const body = {
+    staffId: state.staffId,
+    cpf: document.getElementById("cartCpf").value.trim(),
+    itemId: document.getElementById("cartItem").value.trim(),
+    qty: Number(document.getElementById("cartQty").value || 1),
+  };
+  const res = await fetch("/SalesOrder/api/CreatePreSales", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  document.getElementById("saleResult").textContent = JSON.stringify(data, null, 2);
+});
+
+const chatBox = document.getElementById("chatBox");
+function addChat(direction, text) {
+  const b = document.createElement("div");
+  b.className = `bubble ${direction}`;
+  b.textContent = text;
+  chatBox.appendChild(b);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+document.getElementById("chatForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("chatInput");
+  const message = input.value.trim();
+  if (!message) return;
+  addChat("outgoing", message);
+  input.value = "";
+  const res = await fetch("/chat/api/chat", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ message }),
+  });
+  const data = await res.json();
+  addChat("incoming", data.message || data.error || "Sem resposta");
+});
+
+refreshChrome();
+showView("home");

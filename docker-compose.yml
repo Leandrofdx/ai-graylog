@@ -1,8 +1,8 @@
-# LabOps Assistant + Graylog + Postgres + Jaeger (OTel)
+# Assistente de Vendas (lab) + Graylog + Postgres + Jaeger
 #
-# UI assistente: http://127.0.0.1:8080
-# Jaeger:        http://127.0.0.1:16686
-# Graylog:       http://127.0.0.1:9000 (ou https via Caddy)
+# UI:     http://127.0.0.1:8080
+# Jaeger: http://127.0.0.1:16686
+# Graylog: http://127.0.0.1:9000 (ou HTTPS via Caddy)
 
 name: graylog-local
 
@@ -178,7 +178,7 @@ services:
 
   app:
     build: ./app
-    container_name: labops-assistant
+    container_name: assistente-vendas
     restart: unless-stopped
     networks: [graylog]
     depends_on:
@@ -189,7 +189,7 @@ services:
       jaeger:
         condition: service_started
     environment:
-      APP_NAME: labops-assistant
+      APP_NAME: assistente-vendas
       GELF_HOST: graylog
       GELF_PORT: "12201"
       PORT: "8080"
@@ -198,9 +198,6 @@ services:
       DB_MAX_OVERFLOW: "2"
       DB_POOL_TIMEOUT: "3"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
-      GRAYLOG_URL: http://graylog:9000
-      GRAYLOG_USER: ${GRAYLOG_ROOT_USERNAME:-admin}
-      GRAYLOG_PASSWORD: ${GRAYLOG_ROOT_PASSWORD:-admin}
       ENV: lab
     ports:
       - "8080:8080"

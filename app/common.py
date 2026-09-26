@@ -22,9 +22,6 @@ _SessionLocal: sessionmaker[Session] | None = None
 
 
 def setup_logging(service_name: str) -> logging.Logger:
-    gelf_host = os.getenv("GELF_HOST", "graylog")
-    gelf_port = int(os.getenv("GELF_PORT", "12201"))
-
     logger = logging.getLogger(service_name)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
@@ -44,15 +41,13 @@ def setup_logging(service_name: str) -> logging.Logger:
             return True
 
     filt = TraceFilter()
-    gelf = graypy.GELFUDPHandler(gelf_host, gelf_port)
+    gelf = graypy.GELFUDPHandler(os.getenv("GELF_HOST", "graylog"), int(os.getenv("GELF_PORT", "12201")))
     gelf.setFormatter(logging.Formatter("%(message)s"))
     gelf.addFilter(filt)
     logger.addHandler(gelf)
 
     console = logging.StreamHandler()
-    console.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(service)s] trace=%(trace_id)s %(message)s")
-    )
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(service)s] trace=%(trace_id)s %(message)s"))
     console.addFilter(filt)
     logger.addHandler(console)
     return logger
@@ -60,17 +55,16 @@ def setup_logging(service_name: str) -> logging.Logger:
 
 def setup_tracing(service_name: str) -> trace.Tracer:
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317")
-    resource = Resource.create(
-        {
-            "service.name": service_name,
-            "service.namespace": "labops",
-            "deployment.environment": os.getenv("ENV", "lab"),
-        }
+    provider = TracerProvider(
+        resource=Resource.create(
+            {
+                "service.name": service_name,
+                "service.namespace": "assistente-lab",
+                "deployment.environment": os.getenv("ENV", "lab"),
+            }
+        )
     )
-    provider = TracerProvider(resource=resource)
-    provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, insecure=True))
-    )
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, insecure=True)))
     trace.set_tracer_provider(provider)
     return trace.get_tracer(service_name)
 
@@ -84,17 +78,11 @@ def get_engine() -> Engine:
     global _engine, _SessionLocal
     if _engine is not None:
         return _engine
-
-    url = os.getenv("DATABASE_URL", "postgresql+psycopg2://lab:lab@postgres:5432/lab")
-    pool_size = int(os.getenv("DB_POOL_SIZE", "3"))
-    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "2"))
-    pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "3"))
-
     _engine = create_engine(
-        url,
-        pool_size=pool_size,
-        max_overflow=max_overflow,
-        pool_timeout=pool_timeout,
+        os.getenv("DATABASE_URL", "postgresql+psycopg2://lab:lab@postgres:5432/lab"),
+        pool_size=int(os.getenv("DB_POOL_SIZE", "3")),
+        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "2")),
+        pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "3")),
         pool_pre_ping=True,
     )
     SQLAlchemyInstrumentor().instrument(engine=_engine)
