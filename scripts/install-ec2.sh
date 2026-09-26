@@ -15,11 +15,15 @@ else
 fi
 
 install_packages() {
-  # Amazon Linux já traz curl-minimal; instalar "curl" conflita.
+  # NÃO instalar o pacote "curl" no Amazon Linux: conflita com curl-minimal.
   if command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y git ca-certificates
+    if ! command -v git >/dev/null 2>&1; then
+      $SUDO dnf install -y --setopt=install_weak_deps=False git
+    fi
   elif command -v yum >/dev/null 2>&1; then
-    $SUDO yum install -y git ca-certificates
+    if ! command -v git >/dev/null 2>&1; then
+      $SUDO yum install -y git
+    fi
   elif command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get update -y
     $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates
@@ -28,8 +32,8 @@ install_packages() {
     exit 1
   fi
 
-  if ! command -v curl >/dev/null 2>&1 && ! command -v curl-minimal >/dev/null 2>&1; then
-    echo "curl não encontrado." >&2
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl não encontrado (curl-minimal serve)." >&2
     exit 1
   fi
   if ! command -v git >/dev/null 2>&1; then

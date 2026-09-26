@@ -28,7 +28,7 @@ detect_public_ip() {
 }
 
 install_compose_plugin() {
-  if docker compose version >/dev/null 2>&1; then
+  if $SUDO docker compose version >/dev/null 2>&1; then
     return 0
   fi
   echo "    Instalando Docker Compose plugin..."
@@ -47,17 +47,17 @@ install_compose_plugin() {
 
 install_docker() {
   if command -v docker >/dev/null 2>&1; then
+    $SUDO systemctl enable --now docker 2>/dev/null || true
     install_compose_plugin
     return 0
   fi
 
   echo "==> Instalando Docker..."
   if command -v dnf >/dev/null 2>&1; then
-    # Amazon Linux 2023+
-    $SUDO dnf install -y docker
+    # Amazon Linux 2023: --allowerasing evita conflito curl vs curl-minimal
+    $SUDO dnf install -y --allowerasing --setopt=install_weak_deps=False docker
     $SUDO systemctl enable --now docker
   elif command -v amazon-linux-extras >/dev/null 2>&1; then
-    # Amazon Linux 2
     $SUDO yum install -y docker || $SUDO amazon-linux-extras install docker -y
     $SUDO systemctl enable --now docker
   elif command -v yum >/dev/null 2>&1 && [[ -f /etc/os-release ]] && grep -qi 'amazon' /etc/os-release; then
