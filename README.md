@@ -1,49 +1,38 @@
 # ai-graylog
 
-Graylog **7.1.9** + OpenSearch + MongoDB + API Flask de exemplo (logs via GELF) + script JMeter.
+**LabOps Assistant** — UI estilo DevOps Agent + Graylog + Postgres + OpenTelemetry/Jaeger (tudo free).
 
-## Local
+## URLs
+
+| Serviço | URL |
+|---------|-----|
+| Assistente (UI) | http://HOST:8080 |
+| Graylog | https://leandrofdx.duckdns.org/ (ou :9000) |
+| Jaeger (traces) | http://HOST:16686 |
+| MCP Graylog | https://leandrofdx.duckdns.org/api/mcp |
+
+## Stack
+
+- App chat com tools: `system_status`, `search_logs` (Graylog API), `db_stats` (Postgres)
+- Logs GELF → Graylog com `trace_id` / `service`
+- Spans OTLP → Jaeger
+- Postgres 16 (pool pequeno → `DbPoolTimeout` sob carga real)
+- Sem erros aleatórios artificiais
+
+## Local / EC2
 
 ```bash
-cp .env.example .env
 docker compose up -d --build
 ```
 
-- Graylog: http://127.0.0.1:9000 (`admin` / `admin`)
-- App: http://127.0.0.1:8080
-
-## Produção (EC2 + DuckDNS)
-
-- Graylog / MCP: https://leandrofdx.duckdns.org/
-- MCP endpoint: https://leandrofdx.duckdns.org/api/mcp
-- App: http://leandrofdx.duckdns.org:8080
-- JMeter (default no `.jmx`): `HOST=leandrofdx.duckdns.org` `PORT=8080`
+JMeter:
 
 ```bash
-jmeter -n -t jmeter/sample-app.jmx -l /tmp/run.jtl
+jmeter -n -t jmeter/sample-app.jmx -l /tmp/labops.jtl
 ```
 
-### Endpoints da app
+Correlação: header `X-Test-Run-Id` + `trace_id` no Graylog e Jaeger.
 
-| Método | Path |
-|--------|------|
-| GET | `/health` |
-| GET | `/api/products` |
-| GET | `/api/products/{sku}` |
-| GET | `/api/users/{id}` |
-| GET | `/api/orders` |
-| GET | `/api/orders/{id}` |
-| POST | `/api/orders` |
-| POST | `/api/payments` |
-| GET | `/api/inventory/{sku}` |
-
-`ERROR_RATE` (default `0.18`) gera 404/429/500/503/etc. aleatórios para análise no Graylog.
-
-### JMeter
-
-```bash
-jmeter -n -t jmeter/sample-app.jmx -l /tmp/run.jtl
-```
 
 ## EC2 (teste barato)
 

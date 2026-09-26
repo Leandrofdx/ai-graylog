@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LabOps Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <div class="brand-name">LabOps</div>
+          <div class="brand-sub">Assistant</div>
+        </div>
+      </div>
+      <button type="button" class="btn-new" id="btnNew">Nova investigação</button>
+      <div class="rail-label">Conversas</div>
+      <nav class="conv-list" id="convList"></nav>
+      <div class="rail-foot">
+        <div class="pill">Graylog + Jaeger</div>
+        <div class="muted">Observabilidade free · lab</div>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <header class="top">
+        <div>
+          <h1 id="chatTitle">Agent Space</h1>
+          <p class="muted">Correlacione carga, logs e traces como o DevOps Agent.</p>
+        </div>
+        <div class="top-meta" id="metaBox">
+          <span class="chip">pronto</span>
+        </div>
+      </header>
+
+      <section class="transcript" id="transcript">
+        <div class="welcome">
+          <h2>Como posso ajudar na investigação?</h2>
+          <p>Pergunte sobre erros, status do Graylog, pool do Postgres ou traces.</p>
+          <div class="suggestions">
+            <button type="button" data-q="Qual o status do sistema e do Graylog?">Status do sistema</button>
+            <button type="button" data-q="Mostre erros e timeouts recentes nos logs">Erros recentes</button>
+            <button type="button" data-q="Como está o banco e o pool sob carga?">Stats do banco</button>
+          </div>
+        </div>
+      </section>
+
+      <form class="composer" id="composer">
+        <textarea id="input" rows="1" placeholder="Descreva o sintoma ou pergunte sobre logs/traces…" required></textarea>
+        <button type="submit" id="send">Enviar</button>
+      </form>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
