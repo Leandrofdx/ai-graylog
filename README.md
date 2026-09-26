@@ -38,19 +38,26 @@ jmeter -n -t jmeter/sample-app.jmx -l /tmp/run.jtl
 
 Sugestão: **t3.medium** Spot, Ubuntu 24.04, 20–30 GB, SG com `22`/`9000`/`8080` só no seu IP.
 
-### Do seu Mac (recomendado)
+### Um comando na EC2
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Leandrofdx/ai-graylog/main/scripts/install-ec2.sh | bash
+```
+
+Isso clona o repo, instala Docker, ajusta o sistema e sobe Graylog + app.
+
+### Do seu Mac (alternativa)
 
 ```bash
 chmod +x scripts/*.sh
 ./scripts/deploy-to-ec2.sh ubuntu@IP_PUBLICO ~/.ssh/sua-chave.pem
 ```
 
-### Ou na própria EC2
+### Ou clone manual
 
 ```bash
-git clone git@github.com:Leandrofdx/ai-graylog.git
+git clone https://github.com/Leandrofdx/ai-graylog.git
 cd ai-graylog
-chmod +x scripts/*.sh
 ./scripts/bootstrap-ec2.sh
 ```
 
