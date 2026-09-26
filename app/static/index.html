@@ -37,6 +37,8 @@
         <button type="button" data-view="stock" class="nav">Estoque</button>
         <button type="button" data-view="customer" class="nav">Cliente</button>
         <button type="button" data-view="cart" class="nav">Carrinho / Pré-venda</button>
+        <button type="button" data-view="monitor" class="nav">Monitor de Propostas</button>
+        <button type="button" data-view="cp" class="nav">Monitor de Crédito Pessoal</button>
         <button type="button" data-view="lia" class="nav">IA Colombo</button>
       </nav>
       <button type="button" class="login-btn" id="btnLoginToggle">Login</button>
@@ -95,14 +97,94 @@
 
       <section class="view hidden" id="view-cart">
         <div class="card">
-          <h2>Carrinho / Pré-venda</h2>
+          <h2>Carrinho / Condições de pagamento</h2>
           <div class="row wrap">
             <label>Item<input id="cartItem" value="SKU-42" /></label>
             <label>Qtd<input id="cartQty" type="number" min="1" value="1" /></label>
             <label>CPF<input id="cartCpf" value="52998224725" /></label>
           </div>
-          <button type="button" class="btn-primary" id="btnPreSale" disabled>Criar pré-venda</button>
+
+          <fieldset class="pay-fieldset">
+            <legend>Forma de pagamento</legend>
+            <label class="radio"><input type="radio" name="payType" value="avista" checked /> À vista</label>
+            <label class="radio"><input type="radio" name="payType" value="cartao" /> Cartão</label>
+            <label class="radio"><input type="radio" name="payType" value="pix" /> PIX</label>
+            <label class="radio"><input type="radio" name="payType" value="cdc" /> CDC (Crediare)</label>
+            <label class="radio"><input type="radio" name="payType" value="cdci" /> CDCI (Fin25)</label>
+          </fieldset>
+
+          <div id="financedBox" class="financed hidden">
+            <div class="row wrap">
+              <button type="button" class="btn-secondary" id="btnLimits">Consultar limites</button>
+              <button type="button" class="btn-secondary" id="btnPlans">Ver mais planos</button>
+            </div>
+            <pre class="result" id="limitsResult"></pre>
+            <label>Plano<select id="planSelect"><option value="">Selecione um plano…</option></select></label>
+          </div>
+
+          <button type="button" class="btn-primary" id="btnPreSale" disabled>Criar pré-venda (ASS)</button>
           <pre class="result" id="saleResult"></pre>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-monitor">
+        <div class="card">
+          <div class="toolbar">
+            <h2>Monitor de Propostas</h2>
+            <button type="button" class="btn-secondary" id="btnRefreshProposals">Atualizar</button>
+          </div>
+          <p class="dim">Propostas CDC / CDCI após CreatePreSales.</p>
+          <div class="table-wrap">
+            <table class="data-table" id="proposalsTable">
+              <thead>
+                <tr>
+                  <th>Proposta</th>
+                  <th>ASS</th>
+                  <th>Cliente</th>
+                  <th>Tipo</th>
+                  <th>Parcelas</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-cp">
+        <div class="card">
+          <div class="toolbar">
+            <h2>Monitor de Crédito Pessoal</h2>
+            <button type="button" class="btn-secondary" id="btnRefreshCp">Atualizar</button>
+          </div>
+          <div class="cp-form">
+            <h3>Incluir proposta CP</h3>
+            <div class="row wrap">
+              <label>CPF<input id="cpCpf" value="52998224725" /></label>
+              <label>Valor (R$)<input id="cpAmount" type="number" min="100" step="50" value="1000" /></label>
+              <label>Parcelas<input id="cpInstallments" type="number" min="1" value="12" /></label>
+            </div>
+            <button type="button" class="btn-primary" id="btnCreateCp" disabled>Incluir Proposta</button>
+            <pre class="result" id="cpCreateResult"></pre>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="cpTable">
+              <thead>
+                <tr>
+                  <th>Proposta</th>
+                  <th>Cliente</th>
+                  <th>Valor</th>
+                  <th>Parcelas</th>
+                  <th>Status</th>
+                  <th>Financeira</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -111,7 +193,7 @@
           <h2>IA Colombo</h2>
           <div class="chat" id="chatBox"></div>
           <form class="chat-form" id="chatForm">
-            <input id="chatInput" placeholder="Pergunte sobre produto, estoque ou cliente…" required />
+            <input id="chatInput" placeholder="Pergunte sobre produto, CDC, CDCI, CP…" required />
             <button type="submit" class="btn-primary">Enviar</button>
           </form>
         </div>

@@ -134,3 +134,35 @@ input {
 }
 .chat-form { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 .chat-form input { flex: 1; }
+
+.pay-fieldset {
+  border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.75rem 1rem; margin: 1rem 0;
+}
+.pay-fieldset legend { padding: 0 0.35rem; color: var(--primary); font-weight: 500; }
+.radio { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0.35rem 0.85rem 0.35rem 0; font-size: 0.92rem; }
+.radio input { width: auto; margin: 0; }
+.financed { margin-bottom: 0.75rem; }
+.financed.hidden { display: none; }
+.btn-secondary {
+  border: 1px solid var(--primary); border-radius: 5px; padding: 0.65rem 0.95rem;
+  background: #fff; color: var(--primary); font: inherit; font-weight: 500; cursor: pointer;
+}
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.toolbar h2 { margin: 0; }
+.table-wrap { overflow: auto; margin-top: 0.75rem; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.data-table th, .data-table td { text-align: left; padding: 0.55rem 0.45rem; border-bottom: 1px solid #eee; }
+.data-table th { color: var(--primary); font-weight: 600; }
+.data-table .btn-mini {
+  border: 0; border-radius: 4px; padding: 0.35rem 0.55rem; background: var(--primary-2);
+  color: #fff; font: inherit; font-size: 0.8rem; cursor: pointer;
+}
+.data-table .btn-mini:disabled { opacity: 0.45; cursor: not-allowed; }
+.cp-form { margin: 1rem 0; padding: 0.85rem; background: #fafafa; border-radius: 10px; }
+.cp-form h3 { margin: 0 0 0.5rem; color: var(--primary); font-size: 1rem; }
+.badge {
+  display: inline-block; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;
+}
+.badge.cdc { background: #e8f4fc; color: var(--primary); }
+.badge.cdci { background: #e6f7f0; color: #0a7a4b; }
+.badge.cp { background: #f3eefc; color: #5b3d9a; }
