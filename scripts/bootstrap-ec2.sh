@@ -45,6 +45,20 @@ install_compose_plugin() {
   $SUDO chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 }
 
+install_docker_amazon() {
+  # Resolve conflito clássico curl vs curl-minimal no AL2023
+  if rpm -q curl-minimal >/dev/null 2>&1 && ! rpm -q curl >/dev/null 2>&1; then
+    echo "    Mantendo curl-minimal; instalando docker com --allowerasing..."
+  fi
+
+  if ! $SUDO dnf install -y --allowerasing --setopt=install_weak_deps=False docker; then
+    echo "    Fallback: swap curl-minimal -> curl, depois docker..."
+    $SUDO dnf swap -y curl-minimal curl --allowerasing || true
+    $SUDO dnf install -y --allowerasing docker
+  fi
+  $SUDO systemctl enable --now docker
+}
+
 install_docker() {
   if command -v docker >/dev/null 2>&1; then
     $SUDO systemctl enable --now docker 2>/dev/null || true
@@ -53,15 +67,13 @@ install_docker() {
   fi
 
   echo "==> Instalando Docker..."
-  if command -v dnf >/dev/null 2>&1; then
-    # Amazon Linux 2023: --allowerasing evita conflito curl vs curl-minimal
-    $SUDO dnf install -y --allowerasing --setopt=install_weak_deps=False docker
-    $SUDO systemctl enable --now docker
+  if [[ -f /etc/os-release ]] && grep -qi 'amazon' /etc/os-release && command -v dnf >/dev/null 2>&1; then
+    install_docker_amazon
   elif command -v amazon-linux-extras >/dev/null 2>&1; then
     $SUDO yum install -y docker || $SUDO amazon-linux-extras install docker -y
     $SUDO systemctl enable --now docker
-  elif command -v yum >/dev/null 2>&1 && [[ -f /etc/os-release ]] && grep -qi 'amazon' /etc/os-release; then
-    $SUDO yum install -y docker
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y --allowerasing docker
     $SUDO systemctl enable --now docker
   elif command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get update -y
