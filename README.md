@@ -38,7 +38,7 @@ jmeter -n -t jmeter/sample-app.jmx -l /tmp/run.jtl
 
 Sugestão: **t3.medium** Spot, Ubuntu 24.04, 20–30 GB, SG com `22`/`9000`/`8080` só no seu IP.
 
-### Um comando na EC2
+### Um comando na EC2 (Amazon Linux ou Ubuntu)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Leandrofdx/ai-graylog/main/scripts/install-ec2.sh | bash
