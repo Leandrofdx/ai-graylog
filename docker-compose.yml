@@ -1,0 +1,142 @@
+# Graylog 7.1.9 + app de exemplo (logs reais via GELF)
+#
+# Subir:  docker compose up -d --build
+# Parar:  docker compose down
+# App:    http://127.0.0.1:8080
+# Graylog: http://127.0.0.1:9000  (admin / admin)
+
+name: graylog-local
+
+services:
+  mongodb:
+    image: mongo:${MONGODB_VERSION:-7.0.16}
+    container_name: graylog-mongodb
+    restart: unless-stopped
+    networks: [graylog]
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  opensearch:
+    image: opensearchproject/opensearch:${OPENSEARCH_VERSION:-2.19.5}
+    container_name: graylog-opensearch
+    restart: unless-stopped
+    networks: [graylog]
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: ${OPENSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-Graylog_OS_Dev1!}
+      action.auto_create_index: "false"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -E '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  graylog:
+    image: graylog/graylog:${GRAYLOG_VERSION:-7.1.9}
+    container_name: graylog-server
+    hostname: graylog
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    entrypoint: /usr/bin/tini -- wait-for-it opensearch:9200 -- /docker-entrypoint.sh
+    environment:
+      GRAYLOG_NODE_ID_FILE: /usr/share/graylog/data/config/node-id
+      GRAYLOG_HTTP_BIND_ADDRESS: 0.0.0.0:9000
+      GRAYLOG_HTTP_EXTERNAL_URI: ${GRAYLOG_HTTP_EXTERNAL_URI:-http://127.0.0.1:9000/}
+      GRAYLOG_ELASTICSEARCH_HOSTS: http://opensearch:9200
+      GRAYLOG_MONGODB_URI: mongodb://mongodb:27017/graylog
+      GRAYLOG_REPORT_DISABLE_SANDBOX: "true"
+      GRAYLOG_PASSWORD_SECRET: ${GRAYLOG_PASSWORD_SECRET}
+      GRAYLOG_ROOT_USERNAME: ${GRAYLOG_ROOT_USERNAME:-admin}
+      GRAYLOG_ROOT_PASSWORD_SHA2: ${GRAYLOG_ROOT_PASSWORD_SHA2}
+      GRAYLOG_ROOT_TIMEZONE: America/Sao_Paulo
+      GRAYLOG_MESSAGE_JOURNAL_ENABLED: "true"
+      GRAYLOG_TIMEZONE: America/Sao_Paulo
+    ports:
+      - "9000:9000/tcp"
+      - "12201:12201/tcp"
+      - "12201:12201/udp"
+      - "12202:12202/tcp"
+    volumes:
+      - graylog_data:/usr/share/graylog/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/api/system/lbstatus || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 36
+      start_period: 60s
+
+  graylog-init:
+    image: curlimages/curl:8.12.1
+    container_name: graylog-init
+    networks: [graylog]
+    depends_on:
+      graylog:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      GRAYLOG_URL: http://graylog:9000
+      GRAYLOG_USER: ${GRAYLOG_ROOT_USERNAME:-admin}
+      GRAYLOG_PASSWORD: ${GRAYLOG_ROOT_PASSWORD:-admin}
+    volumes:
+      - ./scripts/bootstrap-inputs.sh:/bootstrap-inputs.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-inputs.sh"]
+
+  app:
+    build: ./app
+    container_name: sample-app
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      graylog-init:
+        condition: service_completed_successfully
+    environment:
+      APP_NAME: sample-app
+      GELF_HOST: graylog
+      GELF_PORT: "12201"
+      PORT: "8080"
+      ERROR_RATE: "0.18"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+networks:
+  graylog:
+    driver: bridge
+    name: graylog-net
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+  opensearch_data:
+  graylog_data:
