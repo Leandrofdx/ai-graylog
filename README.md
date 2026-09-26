@@ -12,6 +12,17 @@ docker compose up -d --build
 - Graylog: http://127.0.0.1:9000 (`admin` / `admin`)
 - App: http://127.0.0.1:8080
 
+## Produção (EC2 + DuckDNS)
+
+- Graylog / MCP: https://leandrofdx.duckdns.org/
+- MCP endpoint: https://leandrofdx.duckdns.org/api/mcp
+- App: http://leandrofdx.duckdns.org:8080
+- JMeter (default no `.jmx`): `HOST=leandrofdx.duckdns.org` `PORT=8080`
+
+```bash
+jmeter -n -t jmeter/sample-app.jmx -l /tmp/run.jtl
+```
+
 ### Endpoints da app
 
 | Método | Path |
