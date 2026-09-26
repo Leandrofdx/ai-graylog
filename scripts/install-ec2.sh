@@ -15,15 +15,25 @@ else
 fi
 
 install_packages() {
+  # Amazon Linux já traz curl-minimal; instalar "curl" conflita.
   if command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y git curl ca-certificates
+    $SUDO dnf install -y git ca-certificates
   elif command -v yum >/dev/null 2>&1; then
-    $SUDO yum install -y git curl ca-certificates
+    $SUDO yum install -y git ca-certificates
   elif command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get update -y
     $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates
   else
     echo "Distro não suportada (precisa dnf/yum/apt-get)." >&2
+    exit 1
+  fi
+
+  if ! command -v curl >/dev/null 2>&1 && ! command -v curl-minimal >/dev/null 2>&1; then
+    echo "curl não encontrado." >&2
+    exit 1
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git não encontrado após instalação." >&2
     exit 1
   fi
 }
