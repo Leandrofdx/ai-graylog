@@ -68,6 +68,8 @@ services:
       GRAYLOG_NODE_ID_FILE: /usr/share/graylog/data/config/node-id
       GRAYLOG_HTTP_BIND_ADDRESS: 0.0.0.0:9000
       GRAYLOG_HTTP_EXTERNAL_URI: ${GRAYLOG_HTTP_EXTERNAL_URI:-http://127.0.0.1:9000/}
+      GRAYLOG_HTTP_PUBLISH_URI: ${GRAYLOG_HTTP_EXTERNAL_URI:-http://127.0.0.1:9000/}
+      GRAYLOG_HTTP_ENABLE_CORS: "true"
       GRAYLOG_ELASTICSEARCH_HOSTS: http://opensearch:9200
       GRAYLOG_MONGODB_URI: mongodb://mongodb:27017/graylog
       GRAYLOG_REPORT_DISABLE_SANDBOX: "true"
@@ -77,6 +79,7 @@ services:
       GRAYLOG_ROOT_TIMEZONE: America/Sao_Paulo
       GRAYLOG_MESSAGE_JOURNAL_ENABLED: "true"
       GRAYLOG_TIMEZONE: America/Sao_Paulo
+      GRAYLOG_TRUSTED_PROXIES: 172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
     ports:
       - "9000:9000/tcp"
       - "12201:12201/tcp"
@@ -90,6 +93,22 @@ services:
       timeout: 5s
       retries: 36
       start_period: 60s
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: graylog-nginx
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      graylog:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    profiles: ["https"]
 
   graylog-init:
     image: curlimages/curl:8.12.1

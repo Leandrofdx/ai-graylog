@@ -63,6 +63,24 @@ cd ai-graylog
 
 O bootstrap instala Docker, ajusta `vm.max_map_count`, gera `.env` com heap menor e sobe o stack.
 
+## HTTPS (necessário para MCP na AWS DevOps Agent)
+
+A AWS exige endpoint `https://...`. Com IP público, use cert self-signed + Nginx:
+
+```bash
+# Na EC2 (stack já instalado)
+cd ~/ai-graylog && git pull
+curl -fsSL "https://raw.githubusercontent.com/Leandrofdx/ai-graylog/main/scripts/enable-https.sh?v=1" | bash
+```
+
+- UI: `https://SEU_IP/`
+- MCP: `https://SEU_IP/api/mcp`
+- Security Group: liberar **TCP 443**
+
+No formulário AWS: Endpoint URL = `https://SEU_IP/api/mcp`
+
+> Cert self-signed pode ser rejeitado pela AWS. Se isso acontecer, use domínio + Let's Encrypt ou ALB+ACM.
+
 ## Parar
 
 ```bash
