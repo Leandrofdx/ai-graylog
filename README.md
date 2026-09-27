@@ -6,7 +6,8 @@ Lab do **Assistente de Vendas** (UI no estilo Colombo) + observabilidade free.
 
 - App parecida com o Assistente Colombo: login, produtos, estoque, cliente, pré-venda, **CDC / CDCI / CP**, Monitor de Propostas, chat Lia
 - **Postgres** (erros reais sob carga: pool/lock/estoque/limite de crédito)
-- **OpenTelemetry → Jaeger**
+- **OpenTelemetry → Collector (spanmetrics) → Jaeger** + aba **Monitor (SPM)**
+- **Prometheus** (só backend de métricas RED para o Jaeger — sem Grafana)
 - **Logs GELF → Graylog** com `trace_id`
 
 ## Pagamentos (lab)
@@ -26,7 +27,8 @@ Fluxo CDC/CDCI: Limites → FinancialConditions → BatchSimulate (“Ver mais p
 |---------|-----|
 | Assistente UI | http://HOST:8080 |
 | Graylog | https://leandrofdx.duckdns.org/ |
-| Jaeger | http://HOST:16686 |
+| Jaeger (Search + **Monitor/SPM**) | http://HOST:16686 |
+| Prometheus (raw SPM) | http://HOST:9090 |
 
 Login lab: `vendedor1` / `lab123`  
 CPF lab: `52998224725`
@@ -56,6 +58,29 @@ docker compose up -d --build
 docker compose stop postgres app
 docker compose rm -f postgres app
 docker volume rm graylog-local_postgres_data 2>/dev/null || true
+docker compose up -d --build
+```
+
+## Observabilidade (conexões)
+
+Não é só ler log: o lab amarra **UI → log → trace → SPM**.
+
+| Sinal | Onde |
+|-------|------|
+| `X-Request-Id` / `X-Test-Run-Id` / `X-Journey-Step` | Header da UI/JMeter |
+| `trace_id` | Campo GELF no Graylog + Trace ID no Jaeger |
+| `duration_ms` / `error_type` | Log de acesso e erros tipados |
+| `biz_event` | Rótulo de evento de negócio no log (`sale_created`, `plan_simulated`, `proposal_created`…) — não é o HTTP em si |
+| linkPatterns | No Jaeger: clique “Ver logs deste trace no Graylog” |
+| **Monitor (SPM)** | Jaeger → **Monitor**: dropdown por funcionalidade — `assistente-auth`, `catalogo`, `cliente`, `estoque`, `pagamento`, `venda`, `propostas`, `cp` |
+| **Graylog dashboards** | `Negócio · Overview` (KPIs + funil + call-chain CDC) · `Negócio · por funcionalidade` (abas por domínio + aba Performance) — Total vendido (R$)=GMV |
+
+Pipeline SPM: `app → otel-collector (spanmetrics) → Prometheus ← Jaeger Query`.
+
+Jaeger UI: tema dark habilitado — use o ícone de tema no topo.
+
+```bash
+# stack completa (app + Graylog + Jaeger SPM)
 docker compose up -d --build
 ```
 

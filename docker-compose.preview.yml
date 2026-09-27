@@ -1,0 +1,11 @@
+# Preview leve da UI — sem Graylog/OpenSearch/Mongo
+# Uso: docker compose -f docker-compose.yml -f docker-compose.preview.yml up -d --build postgres jaeger app
+services:
+  app:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    environment:
+      GELF_HOST: 127.0.0.1

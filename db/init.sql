@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS products (
     item_id     TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     price       NUMERIC(12,2) NOT NULL CHECK (price >= 0),
-    stock       INT NOT NULL CHECK (stock >= 0)
+    stock       INT NOT NULL CHECK (stock >= 0),
+    category    TEXT NOT NULL DEFAULT 'Geral'
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -86,13 +87,14 @@ INSERT INTO staff (staff_id, name, password, store_id) VALUES
     ('vendedor2', 'Bruno Vendedor', 'lab123', '1001')
 ON CONFLICT (staff_id) DO NOTHING;
 
-INSERT INTO products (item_id, name, price, stock) VALUES
-    ('SKU-7',  'Notebook Pro 15',     4599.90, 25),
-    ('SKU-42', 'Mouse Wireless',       129.90, 120),
-    ('SKU-99', 'Monitor 27 Full HD',  1899.00, 10),
-    ('SKU-15', 'Teclado Mecânico',     499.00, 45),
-    ('SKU-88', 'Smartphone X',        2499.00, 18)
-ON CONFLICT (item_id) DO NOTHING;
+INSERT INTO products (item_id, name, price, stock, category) VALUES
+    ('SKU-7',  'Notebook Pro 15',     4599.90, 25, 'Informática'),
+    ('SKU-42', 'Mouse Wireless',       129.90, 120, 'Acessórios'),
+    ('SKU-99', 'Monitor 27 Full HD',  1899.00, 10, 'Informática'),
+    ('SKU-15', 'Teclado Mecânico',     499.00, 45, 'Acessórios'),
+    ('SKU-88', 'Smartphone X',        2499.00, 18, 'Telefonia')
+ON CONFLICT (item_id) DO UPDATE SET
+    category = EXCLUDED.category;
 
 INSERT INTO customers (cpf, name, account_num, wage) VALUES
     ('52998224725', 'Cliente Lab Um', 'ACC-100', 4200.00),
@@ -100,9 +102,12 @@ INSERT INTO customers (cpf, name, account_num, wage) VALUES
 ON CONFLICT (cpf) DO NOTHING;
 
 INSERT INTO credit_limits (cpf, available_limit, used_limit, product_types) VALUES
-    ('52998224725', 8000.00, 500.00, ARRAY['CDC','CDCI','CP']),
-    ('39053344705', 3500.00, 0.00, ARRAY['CDC','CP'])
-ON CONFLICT (cpf) DO NOTHING;
+    ('52998224725', 500000.00, 0.00, ARRAY['CDC','CDCI','CP']),
+    ('39053344705', 200000.00, 0.00, ARRAY['CDC','CP'])
+ON CONFLICT (cpf) DO UPDATE SET
+    available_limit = EXCLUDED.available_limit,
+    used_limit = EXCLUDED.used_limit,
+    product_types = EXCLUDED.product_types;
 
 -- CDC = Crediare / Financeira 12 (tender 2006, approval 1)
 -- CDCI = Fin25 / Financeira 25 (tender 2011, approval 3)

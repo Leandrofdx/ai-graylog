@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 import time
 import uuid
+import json
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 from flask import Flask, g, jsonify, request, send_from_directory
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError, TimeoutError as SATimeoutError
 
@@ -16,6 +19,8 @@ from common import db_session, get_engine, instrument_flask, ping_db, setup_logg
 SERVICE = os.getenv("APP_NAME", "assistente-vendas")
 PORT = int(os.getenv("PORT", "8080"))
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+JAEGER_UI = os.getenv("JAEGER_UI_URL", "http://127.0.0.1:16686")
+GRAYLOG_UI = os.getenv("GRAYLOG_UI_URL", "http://127.0.0.1:9000")
 
 logger = setup_logging(SERVICE)
 tracer = setup_tracing(SERVICE)
@@ -37,6 +42,39 @@ PAYMENT_ALIASES = {
     "cdci": "cdci",
 }
 
+PAYMENT_LABELS = {
+    "avista": "À vista",
+    "cartao": "Cartão",
+    "pix": "PIX",
+    "cdc": "CDC",
+    "cdci": "CDCI",
+}
+
+
+def _payment_label(payment_type: str) -> str:
+    return PAYMENT_LABELS.get(payment_type, payment_type or "—")
+
+
+def _ensure_schema() -> None:
+    """Lab: garante coluna category (DBs já criados antes do campo)."""
+    try:
+        with db_session() as db:
+            db.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Geral'"))
+            db.execute(
+                text(
+                    "UPDATE products SET category = CASE item_id "
+                    "WHEN 'SKU-7' THEN 'Informática' "
+                    "WHEN 'SKU-99' THEN 'Informática' "
+                    "WHEN 'SKU-42' THEN 'Acessórios' "
+                    "WHEN 'SKU-15' THEN 'Acessórios' "
+                    "WHEN 'SKU-88' THEN 'Telefonia' "
+                    "ELSE COALESCE(NULLIF(category,''), 'Geral') END"
+                )
+            )
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("schema ensure skipped: %s", exc)
+
 
 def _ids() -> tuple[str, str]:
     span = trace.get_current_span()
@@ -48,18 +86,80 @@ def _ids() -> tuple[str, str]:
 
 def _extra(**kwargs: Any) -> dict[str, Any]:
     trace_id, span_id = _ids()
+    domain = _lab_domain()
+    started = getattr(g, "started_at", None)
+    duration_ms = (
+        round((time.perf_counter() - started) * 1000, 2) if started is not None else None
+    )
     data = {
         "service": SERVICE,
+        "spm_service": _spm_service(),
+        "lab_domain": domain,
         "http_method": request.method,
         "http_path": request.path,
         "request_id": getattr(g, "request_id", ""),
         "test_run_id": getattr(g, "test_run_id", ""),
+        "journey_step": getattr(g, "journey_step", ""),
         "trace_id": trace_id,
         "span_id": span_id,
         "staff_id": getattr(g, "staff_id", ""),
     }
+    if duration_ms is not None:
+        data["duration_ms"] = duration_ms
     data.update(kwargs)
+    # domain/spm always win so callers cannot blank them
+    data["lab_domain"] = domain
+    data["spm_service"] = f"assistente-{domain}"
     return data
+
+
+def _tag_span(**attrs: Any) -> None:
+    span = trace.get_current_span()
+    if not span or not span.is_recording():
+        return
+    for key, value in attrs.items():
+        if value is None or value == "":
+            continue
+        span.set_attribute(key, value)
+
+
+def _lab_domain(path: str | None = None) -> str:
+    """Espelha otel-collector: cada rota vira um serviço SPM (assistente-{domain})."""
+    p = (path or request.path or "").lower()
+    if "userauthentication" in p:
+        return "auth"
+    if "/products/" in p:
+        return "catalogo"
+    if "/stock/" in p:
+        return "estoque"
+    if "/customer/" in p:
+        return "cliente"
+    if "/paymentcondition/" in p or "/installmentsimulator/" in p:
+        return "pagamento"
+    if "/salesorder/" in p:
+        return "venda"
+    if "/multifinancial/" in p:
+        return "propostas"
+    if "/personalcredit/" in p:
+        return "cp"
+    return "plataforma"
+
+
+def _spm_service(path: str | None = None) -> str:
+    return f"assistente-{_lab_domain(path)}"
+
+
+def _problem(error_type: str, status: int, body: dict[str, Any] | None = None, **fields: Any) -> Any:
+    """Erro tipado: log GELF + atributos de span para cruzar Graylog ↔ Jaeger."""
+    g.error_type = error_type
+    _tag_span(**{"error.type": error_type, "error": True})
+    span = trace.get_current_span()
+    if span and span.is_recording():
+        span.set_status(Status(StatusCode.ERROR, error_type))
+    payload = {"error": error_type, **(body or {})}
+    level = logger.error if status >= 500 else logger.warning
+    level("%s status=%s", error_type, status, extra=_extra(error_type=error_type, http_status=status, **fields))
+    return jsonify(payload), status
 
 
 def _norm_payment(raw: Any) -> str:
@@ -72,21 +172,62 @@ def _before() -> None:
     g.started_at = time.perf_counter()
     g.request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
     g.test_run_id = request.headers.get("X-Test-Run-Id", "")
+    g.journey_step = request.headers.get("X-Journey-Step", "")
     g.staff_id = request.headers.get("X-Staff-Id", "")
+    g.error_type = ""
+    _tag_span(
+        **{
+            "request.id": g.request_id,
+            "test_run.id": g.test_run_id,
+            "journey.step": g.journey_step,
+            "staff.id": g.staff_id,
+        }
+    )
 
 
 @app.after_request
 def _after(response: Any) -> Any:
     duration_ms = round((time.perf_counter() - g.started_at) * 1000, 2)
     response.headers["X-Request-Id"] = g.request_id
+    if g.test_run_id:
+        response.headers["X-Test-Run-Id"] = g.test_run_id
+    if g.journey_step:
+        response.headers["X-Journey-Step"] = g.journey_step
     tid, _ = _ids()
+    spm = _spm_service()
+    response.headers["X-Obs-Domain"] = _lab_domain()
+    response.headers["X-Obs-Spm-Service"] = spm
+    response.headers["X-Obs-Jaeger-Spm"] = f"{JAEGER_UI}/monitor"
     if tid:
         response.headers["X-Trace-Id"] = tid
+        # Deep links for the UI obs dock
+        response.headers["X-Obs-Jaeger"] = f"{JAEGER_UI}/trace/{tid}"
+        if g.test_run_id:
+            tags = json.dumps({"test_run.id": g.test_run_id}, separators=(",", ":"))
+            response.headers["X-Obs-Jaeger-Journey"] = (
+                f"{JAEGER_UI}/search?service={quote(spm, safe='')}&tags={quote(tags)}"
+            )
+            response.headers["X-Obs-Graylog-Journey"] = (
+                f"{GRAYLOG_UI}/search?q=test_run_id%3A%22{quote(g.test_run_id, safe='')}%22&rangetype=relative&relative=86400"
+            )
+        response.headers["X-Obs-Graylog-Trace"] = (
+            f"{GRAYLOG_UI}/search?q=trace_id%3A{tid}&rangetype=relative&relative=86400"
+        )
+
     span = trace.get_current_span()
     if span and span.is_recording():
         span.set_attribute("http.status_code", response.status_code)
+        span.set_attribute("duration_ms", duration_ms)
         if g.staff_id:
             span.set_attribute("staff.id", g.staff_id)
+        if g.test_run_id:
+            span.set_attribute("test_run.id", g.test_run_id)
+        if g.request_id:
+            span.set_attribute("request.id", g.request_id)
+        if g.journey_step:
+            span.set_attribute("journey.step", g.journey_step)
+        if getattr(g, "error_type", ""):
+            span.set_attribute("error.type", g.error_type)
 
     if request.path.startswith("/api") or "/api/" in request.path or request.path == "/health":
         level = logger.info
@@ -95,12 +236,17 @@ def _after(response: Any) -> Any:
         elif response.status_code >= 400:
             level = logger.warning
         level(
-            "%s %s -> %s (%sms)",
+            "%s %s -> %s (%sms)%s",
             request.method,
             request.path,
             response.status_code,
             duration_ms,
-            extra=_extra(http_status=response.status_code, duration_ms=duration_ms),
+            f" step={g.journey_step}" if g.journey_step else "",
+            extra=_extra(
+                http_status=response.status_code,
+                duration_ms=duration_ms,
+                error_type=getattr(g, "error_type", "") or "",
+            ),
         )
     return response
 
@@ -108,6 +254,17 @@ def _after(response: Any) -> Any:
 @app.get("/")
 def index() -> Any:
     return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.get("/docs")
+@app.get("/swagger")
+def swagger_ui() -> Any:
+    return send_from_directory(STATIC_DIR, "swagger.html")
+
+
+@app.get("/openapi.json")
+def openapi_spec() -> Any:
+    return send_from_directory(STATIC_DIR, "openapi.json")
 
 
 @app.get("/health")
@@ -126,7 +283,7 @@ def authorize() -> Any:
     staff_id = payload.get("staffId") or payload.get("staff_id")
     password = payload.get("password")
     if not staff_id or not password:
-        return jsonify({"error": "ValidationError", "message": "staffId and password required"}), 400
+        return _problem("ValidationError", 400, {"message": "staffId and password required"})
     try:
         with db_session() as db:
             row = db.execute(
@@ -134,10 +291,10 @@ def authorize() -> Any:
                 {"id": staff_id},
             ).mappings().first()
         if not row or row["password"] != password:
-            logger.warning("login failed staff_id=%s", staff_id, extra=_extra(error_type="AuthFailed", staff_id=staff_id))
-            return jsonify({"error": "Unauthorized", "message": "credenciais inválidas"}), 401
+            return _problem("AuthFailed", 401, {"message": "credenciais inválidas"}, staff_id=staff_id)
         token = f"lab-token-{uuid.uuid4().hex[:16]}"
         logger.info("login ok staff_id=%s", staff_id, extra=_extra(staff_id=staff_id, store_id=row["store_id"]))
+        _tag_span(**{"staff.id": row["staff_id"], "store.id": row["store_id"]})
         return jsonify(
             {
                 "token": token,
@@ -148,11 +305,9 @@ def authorize() -> Any:
             }
         )
     except SATimeoutError:
-        logger.error("db pool timeout on login", extra=_extra(error_type="DbPoolTimeout"))
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503)
     except OperationalError as exc:
-        logger.error("db error on login: %s", exc, extra=_extra(error_type="DbOperationalError"))
-        return jsonify({"error": "DbOperationalError"}), 503
+        return _problem("DbOperationalError", 503, {"detail": str(exc)})
 
 
 @app.get("/Products/api/Products/Search")
@@ -163,14 +318,14 @@ def search_products() -> Any:
             if q:
                 rows = db.execute(
                     text(
-                        "SELECT item_id, name, price, stock FROM products "
-                        "WHERE item_id ILIKE :q OR name ILIKE :q ORDER BY name LIMIT 50"
+                        "SELECT item_id, name, price, stock, category FROM products "
+                        "WHERE item_id ILIKE :q OR name ILIKE :q OR category ILIKE :q ORDER BY name LIMIT 50"
                     ),
                     {"q": f"%{q}%"},
                 ).mappings().all()
             else:
                 rows = db.execute(
-                    text("SELECT item_id, name, price, stock FROM products ORDER BY name LIMIT 50")
+                    text("SELECT item_id, name, price, stock, category FROM products ORDER BY name LIMIT 50")
                 ).mappings().all()
         products = [
             {
@@ -178,20 +333,39 @@ def search_products() -> Any:
                 "name": r["name"],
                 "price": float(r["price"]),
                 "stock": r["stock"],
+                "category": r.get("category") or "Geral",
             }
             for r in rows
         ]
-        logger.info("product search q=%s hits=%s", q, len(products), extra=_extra(query=q, hits=len(products)))
+        cats = [p["category"] for p in products if p.get("category")]
+        extra_fields: dict[str, Any] = {
+            "biz_event": "product_search",
+            "query": q,
+            "hits": len(products),
+        }
+        if cats:
+            # categoria dominante nos resultados (evita Empty Value no Graylog)
+            freq: dict[str, int] = {}
+            for c in cats:
+                freq[c] = freq.get(c, 0) + 1
+            extra_fields["product_category"] = max(freq.items(), key=lambda x: x[1])[0]
+        logger.info(
+            "product search q=%s hits=%s",
+            q,
+            len(products),
+            extra=_extra(**extra_fields),
+        )
+        _tag_span(**{"search.query": q, "search.hits": len(products)})
         return jsonify({"products": products})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, query=q)
 
 
 @app.get("/Stock/api/Stock/Find")
 def find_stock() -> Any:
     item_id = request.args.get("itemId") or request.args.get("sku")
     if not item_id:
-        return jsonify({"error": "ValidationError", "message": "itemId required"}), 400
+        return _problem("ValidationError", 400, {"message": "itemId required"})
     try:
         with db_session() as db:
             row = db.execute(
@@ -200,7 +374,14 @@ def find_stock() -> Any:
             ).mappings().first()
             db.rollback()
         if not row:
-            return jsonify({"error": "NotFound", "itemId": item_id}), 404
+            return _problem("ProductNotFound", 404, {"itemId": item_id}, item_id=item_id)
+        logger.info(
+            "stock find item=%s stock=%s",
+            item_id,
+            row["stock"],
+            extra=_extra(item_id=item_id, stock=row["stock"]),
+        )
+        _tag_span(**{"item.id": item_id, "stock.physical": int(row["stock"])})
         return jsonify(
             {
                 "itemId": row["item_id"],
@@ -210,18 +391,16 @@ def find_stock() -> Any:
             }
         )
     except SATimeoutError:
-        logger.error("stock find pool timeout item=%s", item_id, extra=_extra(error_type="DbPoolTimeout", item_id=item_id))
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, item_id=item_id)
     except OperationalError as exc:
-        logger.error("stock find db error: %s", exc, extra=_extra(error_type="DbOperationalError", item_id=item_id))
-        return jsonify({"error": "DbOperationalError"}), 503
+        return _problem("DbOperationalError", 503, {"detail": str(exc)}, item_id=item_id)
 
 
 @app.get("/Customer/api/Customer/FindByCpfCnpj")
 def find_customer() -> Any:
     cpf = (request.args.get("cpf") or request.args.get("cpfCnpj") or "").strip()
     if not cpf:
-        return jsonify({"error": "ValidationError", "message": "cpf required"}), 400
+        return _problem("ValidationError", 400, {"message": "cpf required"})
     try:
         with db_session() as db:
             row = db.execute(
@@ -229,7 +408,9 @@ def find_customer() -> Any:
                 {"cpf": cpf},
             ).mappings().first()
         if not row:
-            return jsonify({"error": "CustomerNotFound", "cpf": cpf}), 404
+            return _problem("CustomerNotFound", 404, {"cpf": cpf}, cpf=cpf)
+        logger.info("customer found cpf=%s", cpf, extra=_extra(cpf=cpf, customer_name=row["name"]))
+        _tag_span(**{"customer.cpf": cpf})
         return jsonify(
             {
                 "cpf": row["cpf"],
@@ -239,7 +420,7 @@ def find_customer() -> Any:
             }
         )
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, cpf=cpf)
 
 
 @app.get("/Customer/api/CustomerLimits")
@@ -248,7 +429,7 @@ def customer_limits() -> Any:
     cpf = (request.args.get("cpf") or request.args.get("cpfCnpj") or "").strip()
     product_type = (request.args.get("productType") or "CDC").upper()
     if not cpf:
-        return jsonify({"error": "ValidationError", "message": "cpf required"}), 400
+        return _problem("ValidationError", 400, {"message": "cpf required"})
     try:
         with db_session() as db:
             row = db.execute(
@@ -259,15 +440,33 @@ def customer_limits() -> Any:
                 {"cpf": cpf},
             ).mappings().first()
         if not row:
-            return jsonify({"error": "LimitsNotFound", "cpf": cpf, "isCreditApproved": False}), 424
+            return _problem("LimitsNotFound", 424, {"cpf": cpf, "isCreditApproved": False}, cpf=cpf)
         allowed = product_type in (row["product_types"] or [])
         available = float(row["available_limit"]) - float(row["used_limit"])
+        if not allowed or available <= 0:
+            _tag_span(**{"credit.approved": False, "credit.product_type": product_type})
+            logger.warning(
+                "credit not approved cpf=%s type=%s available=%s",
+                cpf,
+                product_type,
+                available,
+                extra=_extra(error_type="CreditNotApproved", cpf=cpf, product_type=product_type, available_limit=available),
+            )
+            g.error_type = "CreditNotApproved"
         logger.info(
             "customer limits cpf=%s type=%s available=%s",
             cpf,
             product_type,
             available,
             extra=_extra(cpf=cpf, product_type=product_type, available_limit=available),
+        )
+        _tag_span(
+            **{
+                "customer.cpf": cpf,
+                "credit.product_type": product_type,
+                "credit.available": available,
+                "credit.approved": bool(allowed and available > 0),
+            }
         )
         return jsonify(
             {
@@ -278,11 +477,45 @@ def customer_limits() -> Any:
                 "isCreditApproved": allowed and available > 0,
                 "availableLimit": round(available, 2),
                 "usedLimit": float(row["used_limit"]),
+                "totalLimit": float(row["available_limit"]),
                 "productTypes": list(row["product_types"] or []),
             }
         )
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, cpf=cpf)
+
+
+@app.post("/Customer/api/ResetCreditLimit")
+def reset_credit_limit() -> Any:
+    """Lab: zera used_limit para repetir várias compras com o mesmo CPF."""
+    body = request.get_json(silent=True) or {}
+    cpf = str(body.get("cpf") or request.args.get("cpf") or "").strip()
+    if not cpf:
+        return _problem("ValidationError", 400, {"message": "cpf required"})
+    try:
+        with db_session() as db:
+            row = db.execute(
+                text(
+                    "UPDATE credit_limits SET used_limit = 0 "
+                    "WHERE cpf = :cpf RETURNING available_limit, used_limit, product_types"
+                ),
+                {"cpf": cpf},
+            ).mappings().first()
+            if not row:
+                return _problem("LimitsNotFound", 404, {"cpf": cpf}, cpf=cpf)
+        logger.info("credit limit reset cpf=%s", cpf, extra=_extra(cpf=cpf, action="CreditLimitReset"))
+        _tag_span(**{"customer.cpf": cpf, "credit.reset": True})
+        return jsonify(
+            {
+                "cpf": cpf,
+                "availableLimit": float(row["available_limit"]),
+                "usedLimit": float(row["used_limit"]),
+                "productTypes": list(row["product_types"] or []),
+                "status": "reset",
+            }
+        )
+    except SATimeoutError:
+        return _problem("DbPoolTimeout", 503, cpf=cpf)
 
 
 @app.post("/PaymentCondition/api/FinancialConditions/Find/<store_id>")
@@ -324,11 +557,21 @@ def financial_conditions(store_id: str) -> Any:
             store_id,
             product_type,
             len(plans),
-            extra=_extra(store_id=store_id, product_type=product_type, plans=len(plans)),
+            extra=_extra(
+                biz_event="payment_plans_listed",
+                store_id=store_id,
+                product_type=product_type,
+                payment_method=_payment_label(product_type.lower()),
+                plans=len(plans),
+                plan_name=base["name"] if base else "",
+                installments=base["numOfPayment"] if base else 0,
+                financeira=base["financeira"] if base else "",
+            ),
         )
+        _tag_span(**{"store.id": store_id, "credit.product_type": product_type, "plans.count": len(plans)})
         return jsonify({"storeId": store_id, "productType": product_type, "basePlan": base, "plans": plans})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, store_id=store_id)
 
 
 @app.get("/PaymentCondition/api/PaymentCondition/Find/<store_id>")
@@ -363,9 +606,16 @@ def payment_condition_find(store_id: str) -> Any:
             {"paymentConditionType": 3, "name": "CDC", "tenderTypeId": 2006, "plans": [p for p in financed if p["productType"] == "CDC"]},
             {"paymentConditionType": 3, "name": "CDCI", "tenderTypeId": 2011, "plans": [p for p in financed if p["productType"] == "CDCI"]},
         ]
+        logger.info(
+            "payment conditions store=%s options=%s",
+            store_id,
+            len(conditions),
+            extra=_extra(store_id=store_id, plans=len(financed)),
+        )
+        _tag_span(**{"store.id": store_id, "payment.conditions": len(conditions)})
         return jsonify({"storeId": store_id, "paymentConditions": conditions})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, store_id=store_id)
 
 
 @app.post("/InstallmentSimulator/api/InstallmentSimulator/BatchSimulate")
@@ -413,17 +663,34 @@ def batch_simulate() -> Any:
                 }
             )
         if not successful:
-            return jsonify({"error": "NoPlans", "message": f"sem planos {product_type}"}), 404
+            return _problem(
+                "NoPlans",
+                404,
+                {"message": f"sem planos {product_type}"},
+                product_type=product_type,
+                amount=amount,
+            )
         logger.info(
             "batch simulate type=%s amount=%s plans=%s",
             product_type,
             amount,
             len(successful),
-            extra=_extra(product_type=product_type, amount=amount, plans=len(successful)),
+            extra=_extra(
+                biz_event="plan_simulated",
+                product_type=product_type,
+                payment_method=_payment_label(product_type.lower()),
+                payment_type=product_type.lower(),
+                amount=amount,
+                plans=len(successful),
+                plan_name=successful[0]["name"] if successful else "",
+                installments=successful[0]["numOfPayment"] if successful else 0,
+                financeira=successful[0]["financeira"] if successful else "",
+            ),
         )
+        _tag_span(**{"credit.product_type": product_type, "sale.amount": amount, "plans.count": len(successful)})
         return jsonify({"productType": product_type, "successful": successful, "failed": []})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, product_type=product_type)
 
 
 @app.post("/SalesOrder/api/CreatePreSales")
@@ -432,13 +699,16 @@ def create_pre_sales() -> Any:
     staff_id = payload.get("staffId") or g.staff_id
     cpf = payload.get("cpf")
     item_id = payload.get("itemId")
-    qty = payload.get("qty", 1)
+    try:
+        qty = int(payload.get("qty", 1))
+    except (TypeError, ValueError):
+        qty = 0
     payment_type = _norm_payment(payload.get("paymentType") or payload.get("paymentConditionType"))
     installments = payload.get("installments") or payload.get("numOfPayment")
     tender = payload.get("tenderTypeId")
 
-    if not staff_id or not cpf or not item_id or not isinstance(qty, int) or qty < 1:
-        return jsonify({"error": "ValidationError", "message": "staffId, cpf, itemId, qty required"}), 400
+    if not staff_id or not cpf or not item_id or qty < 1:
+        return _problem("ValidationError", 400, {"message": "staffId, cpf, itemId, qty required"})
 
     if payment_type == "cdc":
         tender = int(tender or 2006)
@@ -452,35 +722,51 @@ def create_pre_sales() -> Any:
 
     sale_id = f"ASS-{uuid.uuid4().hex[:10].upper()}"
     proposal_id = None
-    span = trace.get_current_span()
-
+    plan_name = ""
+    financeira = ""
+    product_name = ""
+    product_category = "Geral"
     try:
         with db_session() as db:
             with db.begin():
                 cust = db.execute(text("SELECT cpf FROM customers WHERE cpf = :cpf"), {"cpf": cpf}).first()
                 if not cust:
-                    return jsonify({"error": "CustomerNotFound", "cpf": cpf}), 404
+                    return _problem("CustomerNotFound", 404, {"cpf": cpf}, cpf=cpf)
 
                 product = db.execute(
-                    text("SELECT item_id, price, stock FROM products WHERE item_id = :id FOR UPDATE"),
+                    text("SELECT item_id, name, price, stock, category FROM products WHERE item_id = :id FOR UPDATE"),
                     {"id": item_id},
                 ).mappings().first()
                 if not product:
-                    return jsonify({"error": "ProductNotFound", "itemId": item_id}), 404
+                    return _problem("ProductNotFound", 404, {"itemId": item_id}, item_id=item_id)
 
                 if product["stock"] < qty:
-                    logger.warning(
-                        "insufficient stock item=%s qty=%s available=%s",
-                        item_id,
-                        qty,
-                        product["stock"],
-                        extra=_extra(error_type="InsufficientStock", item_id=item_id, qty=qty, stock=product["stock"]),
+                    return _problem(
+                        "InsufficientStock",
+                        409,
+                        {"available": product["stock"]},
+                        item_id=item_id,
+                        qty=qty,
+                        stock=product["stock"],
                     )
-                    if span and span.is_recording():
-                        span.set_attribute("error.type", "InsufficientStock")
-                    return jsonify({"error": "InsufficientStock", "available": product["stock"]}), 409
 
                 amount = Decimal(str(product["price"])) * qty
+                product_name = product["name"]
+                product_category = product.get("category") or "Geral"
+                if payment_type in ("cdc", "cdci") and installments:
+                    plan_row = db.execute(
+                        text(
+                            "SELECT name, financeira FROM financial_plans "
+                            "WHERE product_type = :pt AND num_of_payment = :n "
+                            "ORDER BY id LIMIT 1"
+                        ),
+                        {"pt": payment_type.upper(), "n": int(installments)},
+                    ).mappings().first()
+                    if plan_row:
+                        plan_name = plan_row["name"]
+                        financeira = plan_row["financeira"]
+                if payment_type in ("cdc", "cdci") and not financeira:
+                    financeira = "Financeira 12" if payment_type == "cdc" else "Financeira 25"
 
                 if payment_type in ("cdc", "cdci"):
                     lim = db.execute(
@@ -491,25 +777,18 @@ def create_pre_sales() -> Any:
                         {"cpf": cpf},
                     ).mappings().first()
                     if not lim:
-                        return jsonify({"error": "LimitsNotFound", "cpf": cpf}), 424
+                        return _problem("LimitsNotFound", 424, {"cpf": cpf}, cpf=cpf)
                     available = Decimal(str(lim["available_limit"])) - Decimal(str(lim["used_limit"]))
                     ptype = payment_type.upper()
                     if ptype not in (lim["product_types"] or []) or available < amount:
-                        logger.warning(
-                            "credit limit exceeded cpf=%s type=%s amount=%s available=%s",
-                            cpf,
-                            ptype,
-                            amount,
-                            available,
-                            extra=_extra(error_type="CreditLimitExceeded", cpf=cpf, product_type=ptype),
+                        return _problem(
+                            "CreditLimitExceeded",
+                            409,
+                            {"availableLimit": float(available), "amount": float(amount)},
+                            cpf=cpf,
+                            product_type=ptype,
+                            amount=float(amount),
                         )
-                        return jsonify(
-                            {
-                                "error": "CreditLimitExceeded",
-                                "availableLimit": float(available),
-                                "amount": float(amount),
-                            }
-                        ), 409
                     db.execute(
                         text("UPDATE credit_limits SET used_limit = used_limit + :amt WHERE cpf = :cpf"),
                         {"amt": amount, "cpf": cpf},
@@ -541,7 +820,8 @@ def create_pre_sales() -> Any:
 
                 if payment_type in ("cdc", "cdci"):
                     proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
-                    financeira = "Financeira 12" if payment_type == "cdc" else "Financeira 25"
+                    if not financeira:
+                        financeira = "Financeira 12" if payment_type == "cdc" else "Financeira 25"
                     db.execute(
                         text(
                             "INSERT INTO proposals "
@@ -563,27 +843,67 @@ def create_pre_sales() -> Any:
                     )
 
         logger.info(
-            "pre-sale created id=%s pay=%s staff=%s item=%s qty=%s amount=%s",
+            "pre-sale created id=%s pay=%s plan=%s item=%s category=%s amount=%s",
             sale_id,
             payment_type,
-            staff_id,
+            plan_name or _payment_label(payment_type),
             item_id,
-            qty,
+            product_category,
             amount,
             extra=_extra(
+                biz_event="sale_created",
                 sale_id=sale_id,
                 payment_type=payment_type,
+                payment_method=_payment_label(payment_type),
+                plan_name=plan_name or _payment_label(payment_type),
+                installments=int(installments or 0),
+                financeira=financeira,
+                product_type=payment_type.upper() if payment_type in ("cdc", "cdci") else "",
                 staff_id=staff_id,
                 item_id=item_id,
+                product_name=product_name,
+                product_category=product_category,
                 qty=qty,
                 amount=float(amount),
                 proposal_id=proposal_id or "",
+                proposal_status="pending_integration" if proposal_id else "",
             ),
         )
-        if span and span.is_recording():
-            span.set_attribute("sale.id", sale_id)
-            span.set_attribute("sale.amount", float(amount))
-            span.set_attribute("sale.payment_type", payment_type)
+        if proposal_id:
+            logger.info(
+                "proposal created id=%s type=%s amount=%s",
+                proposal_id,
+                payment_type.upper(),
+                amount,
+                extra=_extra(
+                    biz_event="proposal_created",
+                    proposal_id=proposal_id,
+                    proposal_status="pending_integration",
+                    sale_id=sale_id,
+                    payment_type=payment_type,
+                    payment_method=_payment_label(payment_type),
+                    plan_name=plan_name or _payment_label(payment_type),
+                    installments=int(installments or 0),
+                    financeira=financeira,
+                    product_type=payment_type.upper(),
+                    staff_id=staff_id,
+                    item_id=item_id,
+                    product_name=product_name,
+                    product_category=product_category,
+                    amount=float(amount),
+                ),
+            )
+        _tag_span(
+            **{
+                "sale.id": sale_id,
+                "sale.amount": float(amount),
+                "sale.payment_type": payment_type,
+                "customer.cpf": cpf,
+                "item.id": item_id,
+            }
+        )
+        if proposal_id:
+            _tag_span(**{"proposal.id": proposal_id, "proposal.status": "pending_integration"})
         return jsonify(
             {
                 "saleId": sale_id,
@@ -611,14 +931,11 @@ def create_pre_sales() -> Any:
             }
         ), 201
     except SATimeoutError:
-        logger.error("create pre-sale pool timeout", extra=_extra(error_type="DbPoolTimeout", item_id=item_id))
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, item_id=item_id)
     except IntegrityError:
-        logger.error("create pre-sale integrity", extra=_extra(error_type="DbIntegrityError", item_id=item_id))
-        return jsonify({"error": "DbIntegrityError"}), 409
+        return _problem("DbIntegrityError", 409, item_id=item_id)
     except OperationalError as exc:
-        logger.error("create pre-sale db: %s", exc, extra=_extra(error_type="DbOperationalError"))
-        return jsonify({"error": "DbOperationalError"}), 503
+        return _problem("DbOperationalError", 503, {"detail": str(exc)})
 
 
 @app.get("/MultiFinancial/api/Proposals")
@@ -653,9 +970,22 @@ def list_proposals() -> Any:
                     "createdAt": r["created_at"].isoformat() if r.get("created_at") else None,
                 }
             )
+        pending = sum(1 for p in out if p["status"] == "pending_integration")
+        logger.info(
+            "proposals listed count=%s pending=%s",
+            len(out),
+            pending,
+            extra=_extra(
+                biz_event="proposals_listed",
+                proposals=len(out),
+                pending=pending,
+                product_type=out[0]["productType"] if out else "",
+            ),
+        )
+        _tag_span(**{"proposals.count": len(out), "proposals.pending": pending})
         return jsonify({"proposals": out})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503)
 
 
 @app.post("/MultiFinancial/api/IntegrateProposal")
@@ -664,25 +994,48 @@ def integrate_proposal() -> Any:
     payload = request.get_json(silent=True) or {}
     proposal_id = payload.get("proposalId")
     if not proposal_id:
-        return jsonify({"error": "ValidationError", "message": "proposalId required"}), 400
+        return _problem("ValidationError", 400, {"message": "proposalId required"})
     try:
         with db_session() as db:
             with db.begin():
                 row = db.execute(
-                    text("SELECT id, status, financeira, product_type FROM proposals WHERE id = :id FOR UPDATE"),
+                    text(
+                        "SELECT id, status, financeira, product_type, installments, amount, sale_id "
+                        "FROM proposals WHERE id = :id FOR UPDATE"
+                    ),
                     {"id": proposal_id},
                 ).mappings().first()
                 if not row:
-                    return jsonify({"error": "ProposalNotFound"}), 404
+                    return _problem("ProposalNotFound", 404, {"proposalId": proposal_id}, proposal_id=proposal_id)
                 db.execute(
                     text("UPDATE proposals SET status = :st WHERE id = :id"),
                     {"st": "integrated", "id": proposal_id},
                 )
         logger.info(
-            "proposal integrated id=%s fin=%s",
+            "proposal integrated id=%s fin=%s type=%s",
             proposal_id,
             row["financeira"],
-            extra=_extra(proposal_id=proposal_id, financeira=row["financeira"], product_type=row["product_type"]),
+            row["product_type"],
+            extra=_extra(
+                biz_event="proposal_integrated",
+                proposal_id=proposal_id,
+                proposal_status="integrated",
+                sale_id=row.get("sale_id") or "",
+                financeira=row["financeira"],
+                product_type=row["product_type"],
+                payment_method=row["product_type"],
+                installments=int(row["installments"] or 0),
+                amount=float(row["amount"]),
+                plan_name=f"{row['product_type']} {row['installments']}x",
+            ),
+        )
+        _tag_span(
+            **{
+                "proposal.id": proposal_id,
+                "proposal.status": "integrated",
+                "proposal.financeira": row["financeira"],
+                "credit.product_type": row["product_type"],
+            }
         )
         return jsonify(
             {
@@ -693,7 +1046,7 @@ def integrate_proposal() -> Any:
             }
         )
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, proposal_id=proposal_id)
 
 
 @app.post("/PersonalCredit/api/Create")
@@ -706,18 +1059,18 @@ def create_personal_credit() -> Any:
     installments = int(payload.get("installments") or 12)
 
     if not staff_id or not cpf or amount is None:
-        return jsonify({"error": "ValidationError", "message": "staffId, cpf, amount required"}), 400
+        return _problem("ValidationError", 400, {"message": "staffId, cpf, amount required"})
     try:
         amount_d = Decimal(str(amount))
         if amount_d <= 0 or installments < 1:
-            return jsonify({"error": "ValidationError", "message": "amount/installments inválidos"}), 400
+            return _problem("ValidationError", 400, {"message": "amount/installments inválidos"})
 
         cp_id = f"CP-{uuid.uuid4().hex[:10].upper()}"
         with db_session() as db:
             with db.begin():
                 cust = db.execute(text("SELECT cpf FROM customers WHERE cpf = :cpf"), {"cpf": cpf}).first()
                 if not cust:
-                    return jsonify({"error": "CustomerNotFound", "cpf": cpf}), 404
+                    return _problem("CustomerNotFound", 404, {"cpf": cpf}, cpf=cpf)
 
                 lim = db.execute(
                     text(
@@ -727,12 +1080,16 @@ def create_personal_credit() -> Any:
                     {"cpf": cpf},
                 ).mappings().first()
                 if not lim or "CP" not in (lim["product_types"] or []):
-                    return jsonify({"error": "CpNotAllowed", "cpf": cpf}), 424
+                    return _problem("CpNotAllowed", 424, {"cpf": cpf}, cpf=cpf)
                 available = Decimal(str(lim["available_limit"])) - Decimal(str(lim["used_limit"]))
                 if available < amount_d:
-                    return jsonify(
-                        {"error": "CreditLimitExceeded", "availableLimit": float(available), "amount": float(amount_d)}
-                    ), 409
+                    return _problem(
+                        "CreditLimitExceeded",
+                        409,
+                        {"availableLimit": float(available), "amount": float(amount_d)},
+                        cpf=cpf,
+                        amount=float(amount_d),
+                    )
 
                 db.execute(
                     text("UPDATE credit_limits SET used_limit = used_limit + :amt WHERE cpf = :cpf"),
@@ -760,7 +1117,27 @@ def create_personal_credit() -> Any:
             cp_id,
             cpf,
             amount_d,
-            extra=_extra(cp_id=cp_id, cpf=cpf, amount=float(amount_d), installments=installments),
+            extra=_extra(
+                biz_event="cp_created",
+                cp_id=cp_id,
+                cpf=cpf,
+                amount=float(amount_d),
+                installments=installments,
+                payment_method="CP",
+                payment_type="cp",
+                product_type="CP",
+                plan_name=f"CP {installments}x",
+                financeira="Crediare",
+            ),
+        )
+        _tag_span(
+            **{
+                "cp.id": cp_id,
+                "sale.amount": float(amount_d),
+                "sale.payment_type": "cp",
+                "customer.cpf": cpf,
+                "cp.installments": installments,
+            }
         )
         return jsonify(
             {
@@ -774,10 +1151,9 @@ def create_personal_credit() -> Any:
             }
         ), 201
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503, cpf=cpf or "")
     except OperationalError as exc:
-        logger.error("cp create db: %s", exc, extra=_extra(error_type="DbOperationalError"))
-        return jsonify({"error": "DbOperationalError"}), 503
+        return _problem("DbOperationalError", 503, {"detail": str(exc)})
 
 
 @app.get("/PersonalCredit/api/Proposals")
@@ -808,9 +1184,11 @@ def list_personal_credits() -> Any:
             }
             for r in rows
         ]
+        logger.info("cp proposals listed count=%s", len(out), extra=_extra(proposals=len(out)))
+        _tag_span(**{"cp.proposals.count": len(out)})
         return jsonify({"proposals": out})
     except SATimeoutError:
-        return jsonify({"error": "DbPoolTimeout"}), 503
+        return _problem("DbPoolTimeout", 503)
 
 
 @app.post("/chat/api/chat")
@@ -860,5 +1238,6 @@ def list_pre_sales() -> Any:
 
 
 if __name__ == "__main__":
+    _ensure_schema()
     logger.info("starting Assistente de Vendas lab", extra={"service": SERVICE})
     app.run(host="0.0.0.0", port=PORT, threaded=True)

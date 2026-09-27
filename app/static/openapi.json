@@ -1,0 +1,279 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Assistente de Vendas Lab API",
+    "description": "APIs do lab estilo Colombo Assistente — Authorize, produtos, estoque, cliente, CDC/CDCI, CP, pré-venda e chat Lia.",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "/", "description": "Local / EC2" }],
+  "tags": [
+    { "name": "Auth" },
+    { "name": "Catalog" },
+    { "name": "Customer" },
+    { "name": "Payment" },
+    { "name": "Sales" },
+    { "name": "Financial" },
+    { "name": "PersonalCredit" },
+    { "name": "Chat" },
+    { "name": "Ops" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Ops"],
+        "summary": "Healthcheck",
+        "responses": { "200": { "description": "OK" }, "503": { "description": "DB down" } }
+      }
+    },
+    "/UserAuthentication/api/Authorize": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login do vendedor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["staffId", "password"],
+                "properties": {
+                  "staffId": { "type": "string", "example": "vendedor1" },
+                  "password": { "type": "string", "example": "lab123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Token e dados do staff" },
+          "401": { "description": "Credenciais inválidas" }
+        }
+      }
+    },
+    "/Products/api/Products/Search": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Buscar produtos",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "example": "Mouse" }
+        ],
+        "responses": { "200": { "description": "Lista de produtos" } }
+      }
+    },
+    "/Stock/api/Stock/Find": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Consultar estoque",
+        "parameters": [
+          { "name": "itemId", "in": "query", "required": true, "schema": { "type": "string" }, "example": "SKU-42" }
+        ],
+        "responses": { "200": { "description": "Estoque físico" }, "404": { "description": "Não encontrado" } }
+      }
+    },
+    "/Customer/api/Customer/FindByCpfCnpj": {
+      "get": {
+        "tags": ["Customer"],
+        "summary": "Buscar cliente por CPF/CNPJ",
+        "parameters": [
+          { "name": "cpf", "in": "query", "required": true, "schema": { "type": "string" }, "example": "52998224725" }
+        ],
+        "responses": { "200": { "description": "Cliente" }, "404": { "description": "Não encontrado" } }
+      }
+    },
+    "/Customer/api/CustomerLimits": {
+      "get": {
+        "tags": ["Customer"],
+        "summary": "Limites CDC / CDCI / CP",
+        "parameters": [
+          { "name": "cpf", "in": "query", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "productType",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["CDC", "CDCI", "CP"] },
+            "example": "CDC"
+          }
+        ],
+        "responses": { "200": { "description": "Limites" }, "424": { "description": "Sem limite" } }
+      }
+    },
+    "/PaymentCondition/api/FinancialConditions/Find/{storeId}": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Condições financeiras (basePlan)",
+        "parameters": [
+          { "name": "storeId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "1001" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "productType": { "type": "string", "example": "cdc" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "basePlan + plans" } }
+      }
+    },
+    "/PaymentCondition/api/PaymentCondition/Find/{storeId}": {
+      "get": {
+        "tags": ["Payment"],
+        "summary": "Condições de pagamento da loja",
+        "parameters": [
+          { "name": "storeId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "1001" }
+        ],
+        "responses": { "200": { "description": "À vista / cartão / PIX / CDC / CDCI" } }
+      }
+    },
+    "/InstallmentSimulator/api/InstallmentSimulator/BatchSimulate": {
+      "post": {
+        "tags": ["Payment"],
+        "summary": "Ver mais planos (BatchSimulate)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "productType": { "type": "string", "example": "cdc" },
+                  "amount": { "type": "number", "example": 129.9 },
+                  "minInstallments": { "type": "integer", "example": 12 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Planos successful[]" }, "404": { "description": "Sem planos" } }
+      }
+    },
+    "/SalesOrder/api/CreatePreSales": {
+      "post": {
+        "tags": ["Sales"],
+        "summary": "Criar pré-venda (ASS)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["staffId", "cpf", "itemId", "qty"],
+                "properties": {
+                  "staffId": { "type": "string", "example": "vendedor1" },
+                  "cpf": { "type": "string", "example": "52998224725" },
+                  "itemId": { "type": "string", "example": "SKU-42" },
+                  "qty": { "type": "integer", "example": 1 },
+                  "paymentType": {
+                    "type": "string",
+                    "enum": ["avista", "cartao", "pix", "cdc", "cdci"],
+                    "example": "cdc"
+                  },
+                  "tenderTypeId": { "type": "integer", "example": 2006 },
+                  "installments": { "type": "integer", "example": 12 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "ASS criada (+ proposalId se CDC/CDCI)" },
+          "409": { "description": "Estoque / limite" }
+        }
+      }
+    },
+    "/MultiFinancial/api/Proposals": {
+      "get": {
+        "tags": ["Financial"],
+        "summary": "Monitor de propostas CDC/CDCI",
+        "responses": { "200": { "description": "Lista de propostas" } }
+      }
+    },
+    "/MultiFinancial/api/IntegrateProposal": {
+      "post": {
+        "tags": ["Financial"],
+        "summary": "Integrar proposta na financeira",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["proposalId"],
+                "properties": { "proposalId": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Integrada" }, "404": { "description": "Não encontrada" } }
+      }
+    },
+    "/PersonalCredit/api/Create": {
+      "post": {
+        "tags": ["PersonalCredit"],
+        "summary": "Criar Crédito Pessoal (CP)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["staffId", "cpf", "amount"],
+                "properties": {
+                  "staffId": { "type": "string" },
+                  "cpf": { "type": "string" },
+                  "amount": { "type": "number", "example": 1000 },
+                  "installments": { "type": "integer", "example": 12 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Proposta CP" } }
+      }
+    },
+    "/PersonalCredit/api/Proposals": {
+      "get": {
+        "tags": ["PersonalCredit"],
+        "summary": "Monitor de Crédito Pessoal",
+        "responses": { "200": { "description": "Lista CP" } }
+      }
+    },
+    "/chat/api/chat": {
+      "post": {
+        "tags": ["Chat"],
+        "summary": "Chat Lia (lab)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "message": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Resposta" } }
+      }
+    },
+    "/api/pre-sales": {
+      "get": {
+        "tags": ["Sales"],
+        "summary": "Listar últimas pré-vendas",
+        "responses": { "200": { "description": "preSales[]" } }
+      }
+    }
+  },
+  "components": {
+    "parameters": {},
+    "securitySchemes": {
+      "StaffHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Staff-Id"
+      }
+    }
+  }
+}

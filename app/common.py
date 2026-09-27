@@ -93,6 +93,7 @@ def get_engine() -> Engine:
         span = trace.get_current_span()
         if span and span.is_recording():
             span.add_event("db.pool.checkout")
+            span.set_attribute("db.pool.checkout", True)
 
     return _engine
 

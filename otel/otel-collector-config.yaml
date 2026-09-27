@@ -1,0 +1,76 @@
+# App → OTEL Collector → Jaeger (traces) + Prometheus RED (SPM por funcionalidade)
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+connectors:
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+      - name: lab.domain
+    exemplars:
+      enabled: true
+    metrics_flush_interval: 15s
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+
+  transform/tag_domain:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(span.attributes["lab.domain"], "auth") where IsMatch(span.name, "(?i).*UserAuthentication.*")
+          - set(span.attributes["lab.domain"], "catalogo") where IsMatch(span.name, "(?i).*/Products/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "estoque") where IsMatch(span.name, "(?i).*/Stock/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "cliente") where IsMatch(span.name, "(?i).*/Customer/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "pagamento") where IsMatch(span.name, "(?i).*(/PaymentCondition/|/InstallmentSimulator/).*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "venda") where IsMatch(span.name, "(?i).*/SalesOrder/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "propostas") where IsMatch(span.name, "(?i).*/MultiFinancial/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "cp") where IsMatch(span.name, "(?i).*/PersonalCredit/.*") and span.attributes["lab.domain"] == nil
+          - set(span.attributes["lab.domain"], "plataforma") where span.attributes["lab.domain"] == nil
+
+  groupbyattrs:
+    keys:
+      - lab.domain
+
+  transform/service_from_domain:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["service.namespace"], "assistente-lab")
+          - set(resource.attributes["service.name"], Concat(["assistente-", resource.attributes["lab.domain"]], "")) where resource.attributes["lab.domain"] != nil
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform/tag_domain, groupbyattrs, transform/service_from_domain, batch]
+      exporters: [otlp/jaeger, spanmetrics]
+    metrics/spanmetrics:
+      receivers: [spanmetrics]
+      exporters: [prometheus]
+  telemetry:
+    logs:
+      level: info

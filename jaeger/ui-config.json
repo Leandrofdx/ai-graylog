@@ -1,0 +1,92 @@
+{
+  "themes": {
+    "enabled": true
+  },
+  "monitor": {
+    "menuEnabled": true,
+    "docsLink": "https://www.jaegertracing.io/docs/1.76/deployment/spm/",
+    "emptyState": {
+      "mainTitle": "SPM por funcionalidade",
+      "subTitle": "Escolha o serviço no dropdown do Monitor",
+      "description": "Serviços: assistente-auth, assistente-catalogo, assistente-cliente, assistente-estoque, assistente-pagamento, assistente-venda, assistente-propostas, assistente-cp. Gere tráfego na UI; em ~15–30s sobem Request / Error / Latency.",
+      "info": "Cada funcionalidade da API vira um serviço no Jaeger Monitor (RED).",
+      "alert": {
+        "message": "Ex.: assistente-venda = CreatePreSales; assistente-propostas = Monitor/Integrar.",
+        "type": "info"
+      }
+    }
+  },
+  "dependencies": {
+    "menuEnabled": true,
+    "dagMaxNumServices": 200
+  },
+  "traceIdDisplayLength": 16,
+  "criticalPathEnabled": true,
+  "topTagPrefixes": [
+    "error.",
+    "test_run.",
+    "journey.",
+    "request.",
+    "sale.",
+    "proposal.",
+    "cp.",
+    "credit.",
+    "customer.",
+    "http.",
+    "db.",
+    "staff.",
+    "duration_ms"
+  ],
+  "menu": [
+    {
+      "label": "Lab",
+      "items": [
+        { "label": "Assistente UI", "url": "http://127.0.0.1:8080/" },
+        { "label": "Swagger", "url": "http://127.0.0.1:8080/docs" },
+        { "label": "Graylog (logs)", "url": "http://127.0.0.1:9000/" },
+        { "label": "Negócio · Overview", "url": "http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c69356" },
+        { "label": "Negócio · por funcionalidade", "url": "http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c6935f" },
+        { "label": "Prometheus (SPM raw)", "url": "http://127.0.0.1:9090" }
+      ]
+    },
+    {
+      "label": "SPM por funcionalidade",
+      "items": [
+        { "label": "Monitor (escolher serviço)", "url": "http://127.0.0.1:16686/monitor" },
+        { "label": "Auth", "url": "http://127.0.0.1:16686/search?service=assistente-auth" },
+        { "label": "Catálogo", "url": "http://127.0.0.1:16686/search?service=assistente-catalogo" },
+        { "label": "Cliente", "url": "http://127.0.0.1:16686/search?service=assistente-cliente" },
+        { "label": "Estoque", "url": "http://127.0.0.1:16686/search?service=assistente-estoque" },
+        { "label": "Pagamento", "url": "http://127.0.0.1:16686/search?service=assistente-pagamento" },
+        { "label": "Venda", "url": "http://127.0.0.1:16686/search?service=assistente-venda" },
+        { "label": "Propostas", "url": "http://127.0.0.1:16686/search?service=assistente-propostas" },
+        { "label": "Crédito Pessoal", "url": "http://127.0.0.1:16686/search?service=assistente-cp" }
+      ]
+    }
+  ],
+  "linkPatterns": [
+    {
+      "type": "traces",
+      "url": "http://127.0.0.1:9000/search?q=trace_id%3A#{trace.traceID}&rangetype=relative&relative=86400",
+      "text": "Logs deste trace no Graylog"
+    },
+    {
+      "type": "tags",
+      "key": "test_run.id",
+      "url": "http://127.0.0.1:9000/search?q=test_run_id%3A%22#{test_run.id}%22&rangetype=relative&relative=86400",
+      "text": "Toda a jornada no Graylog (test_run)"
+    },
+    {
+      "type": "tags",
+      "key": "error.type",
+      "url": "http://127.0.0.1:9000/search?q=error_type%3A#{error.type}+AND+trace_id%3A#{trace.traceID}&rangetype=relative&relative=86400",
+      "text": "Logs do erro #{error.type}"
+    },
+    {
+      "type": "tags",
+      "key": "http.status_code",
+      "url": "http://127.0.0.1:9000/search?q=trace_id%3A#{trace.traceID}&rangetype=relative&relative=86400",
+      "text": "Logs Graylog · status #{http.status_code}"
+    }
+  ]
+}

@@ -6,200 +6,356 @@
   <title>Assistente Colombo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=15" />
 </head>
 <body>
-  <div class="app">
-    <header class="appbar">
-      <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <div class="shell">
+    <header class="app-header">
       <div class="brand">
         <div class="logo" aria-hidden="true"></div>
         <div>
-          <strong>Assistente</strong>
-          <span>Colombo · lab</span>
+          <strong>Assistente Colombo</strong>
+          <span>Estúdio de Venda</span>
         </div>
       </div>
-      <div class="appbar-right" id="userChip">Faça login</div>
+      <div class="header-right">
+        <div class="store-pill" id="storePill">Loja —</div>
+        <div class="user-chip" id="userChip">Faça login</div>
+        <button type="button" class="badge-btn hidden" id="btnOpenMonitor" title="Monitor de Propostas">
+          <span>Monitor</span>
+          <em id="monitorCount">0</em>
+        </button>
+        <nav class="obs-links" aria-label="Docs e observabilidade">
+          <a class="header-link" href="/docs" target="_blank" rel="noopener" title="OpenAPI / Swagger">Swagger</a>
+          <a class="header-link" href="http://127.0.0.1:9000/" target="_blank" rel="noopener" title="Graylog · admin / admin">Graylog</a>
+          <a class="header-link" href="http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c69356" target="_blank" rel="noopener" title="Negócio · Overview">GL Negócio</a>
+          <a class="header-link" href="http://127.0.0.1:16686/" target="_blank" rel="noopener" title="Jaeger Search">Jaeger</a>
+          <a class="header-link" href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener" title="SPM por funcionalidade (RED)">SPM</a>
+        </nav>
+        <button type="button" class="header-link hidden" id="btnLoginToggle">Login</button>
+      </div>
     </header>
 
-    <aside class="drawer" id="drawer">
-      <div class="drawer-head">
-        <div class="persona"></div>
-        <div>
-          <div id="drawerName">Assistente Colombo</div>
-          <small id="drawerSub">Realize o login</small>
-        </div>
-      </div>
-      <nav>
-        <button type="button" data-view="home" class="nav active">Início</button>
-        <button type="button" data-view="products" class="nav">Produtos</button>
-        <button type="button" data-view="stock" class="nav">Estoque</button>
-        <button type="button" data-view="customer" class="nav">Cliente</button>
-        <button type="button" data-view="cart" class="nav">Carrinho / Pré-venda</button>
-        <button type="button" data-view="monitor" class="nav">Monitor de Propostas</button>
-        <button type="button" data-view="cp" class="nav">Monitor de Crédito Pessoal</button>
-        <button type="button" data-view="lia" class="nav">IA Colombo</button>
-      </nav>
-      <button type="button" class="login-btn" id="btnLoginToggle">Login</button>
-    </aside>
-    <div class="backdrop" id="backdrop"></div>
+    <nav class="mod-nav hidden" id="modNav" aria-label="Módulos">
+      <button type="button" class="mod active" data-mod="sale">Venda</button>
+      <button type="button" class="mod" data-mod="products">Produtos</button>
+      <button type="button" class="mod" data-mod="stock">Estoque</button>
+      <button type="button" class="mod" data-mod="customer">Cliente</button>
+      <button type="button" class="mod" data-mod="monitor">Monitor</button>
+      <button type="button" class="mod" data-mod="cp">Crédito Pessoal</button>
+      <span class="mod-sep" aria-hidden="true"></span>
+      <a class="mod" href="/docs" target="_blank" rel="noopener">Swagger</a>
+      <a class="mod" href="http://127.0.0.1:9000/" target="_blank" rel="noopener" title="admin / admin">Graylog</a>
+      <a class="mod" href="http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c69356" target="_blank" rel="noopener">GL Negócio</a>
+      <a class="mod" href="http://127.0.0.1:16686/" target="_blank" rel="noopener">Jaeger</a>
+      <a class="mod" href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener">SPM</a>
+    </nav>
 
-    <main class="content">
-      <section class="view" id="view-home">
-        <div class="welcome card">
-          <img class="welcome-mark" alt="" />
-          <h1>Bem-vindo ao Assistente!</h1>
-          <p>Pesquise por produtos, consulte estoque e muito mais.</p>
-          <p class="dim">Faça login para ter acesso a todas as funcionalidades.</p>
-          <button type="button" class="btn-primary" id="btnWelcomeLogin">Fazer login</button>
+    <nav class="act-rail hidden" id="actRail" aria-label="Jornada da venda">
+      <button type="button" class="act active" data-act="1"><span>1</span> Quem</button>
+      <button type="button" class="act" data-act="2"><span>2</span> O quê</button>
+      <button type="button" class="act" data-act="3"><span>3</span> Como pagar</button>
+      <button type="button" class="act" data-act="4"><span>4</span> Fechar</button>
+    </nav>
+
+    <main class="stage">
+      <!-- Guest / Login -->
+      <section class="view" id="view-welcome">
+        <div class="welcome-hero">
+          <p class="eyebrow">Lojas Colombo</p>
+          <h1>Bem-vindo ao Assistente</h1>
+          <p class="lead">Feche a venda com o cliente na frente — produto, crédito e pré-venda num só palco.</p>
+          <button type="button" class="btn-primary btn-lg" id="btnWelcomeLogin">Entrar como vendedor</button>
+          <p class="hint">Lab: vendedor1 / lab123</p>
+          <div class="welcome-links">
+            <a href="/docs" target="_blank" rel="noopener">Swagger</a>
+            <a href="http://127.0.0.1:9000/" target="_blank" rel="noopener" title="admin / admin">Graylog · admin/admin</a>
+            <a href="http://127.0.0.1:16686/" target="_blank" rel="noopener">Jaeger</a>
+            <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener">SPM</a>
+          </div>
+          <div class="spm-by-fn">
+            <p class="section-label">Dashboards SPM por funcionalidade</p>
+            <p class="dim spm-hint">No Jaeger Monitor, escolha o serviço. Cada um é uma fatia da API (request / error / latency).</p>
+            <div class="spm-grid">
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Auth</strong><span>assistente-auth</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Catálogo</strong><span>assistente-catalogo</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Cliente</strong><span>assistente-cliente</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Estoque</strong><span>assistente-estoque</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Pagamento</strong><span>assistente-pagamento</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Venda</strong><span>assistente-venda</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>Propostas</strong><span>assistente-propostas</span></a>
+              <a href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener"><strong>CP</strong><span>assistente-cp</span></a>
+            </div>
+          </div>
+          <div class="spm-by-fn">
+            <p class="section-label">Graylog · insights de negócio</p>
+            <p class="dim spm-hint">2 dashboards: Overview (KPIs + funil + call-chain) e por funcionalidade (rotas de cada domínio + aba Performance).</p>
+            <div class="spm-grid">
+              <a href="http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c69356" target="_blank" rel="noopener"><strong>Overview</strong><span>KPIs · funil · Total vendido (R$)</span></a>
+              <a href="http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c6935f" target="_blank" rel="noopener"><strong>Por funcionalidade</strong><span>rotas · abas · Performance</span></a>
+            </div>
+          </div>
         </div>
       </section>
 
       <section class="view hidden" id="view-login">
-        <div class="card narrow">
+        <div class="login-panel">
           <h2>Login do vendedor</h2>
-          <label>Staff ID<input id="staffId" value="vendedor1" /></label>
-          <label>Senha<input id="password" type="password" value="lab123" /></label>
-          <button type="button" class="btn-primary" id="btnLogin">Entrar</button>
-          <p class="hint">Lab: vendedor1 / lab123</p>
+          <label>Staff ID<input id="staffId" value="vendedor1" autocomplete="username" /></label>
+          <label>Senha<input id="password" type="password" value="lab123" autocomplete="current-password" /></label>
+          <button type="button" class="btn-primary btn-block" id="btnLogin">Entrar</button>
         </div>
       </section>
 
-      <section class="view hidden" id="view-products">
-        <div class="card">
-          <h2>Produtos</h2>
-          <div class="row">
+      <!-- Sale studio -->
+      <section class="view hidden" id="view-sale">
+        <div class="act-panel" data-panel="1" id="act1">
+          <header class="act-head">
+            <h1>Quem está comprando?</h1>
+            <p>Identifique o cliente e veja o que o crédito facilita nesta venda.</p>
+          </header>
+          <div class="who-row">
+            <label class="big-field">
+              CPF / CNPJ
+              <input id="cartCpf" value="52998224725" inputmode="numeric" />
+            </label>
+            <button type="button" class="btn-primary btn-lg" id="btnValidateCustomer">Validar cliente</button>
+          </div>
+          <div id="customerHero" class="customer-hero empty">
+            <p>Informe o CPF da massa lab para liberar a jornada.</p>
+          </div>
+          <div class="limit-strip hidden" id="limitStrip">
+            <div class="limit-pulse" id="limitPulse"></div>
+            <div>
+              <strong id="limitHeadline">—</strong>
+              <p id="limitSub" class="dim">—</p>
+            </div>
+            <div class="limit-tabs" id="limitTabs">
+              <button type="button" class="chip active" data-limit="CDC">CDC</button>
+              <button type="button" class="chip" data-limit="CDCI">CDCI</button>
+              <button type="button" class="chip" data-limit="CP">CP</button>
+            </div>
+            <button type="button" class="btn-ghost" id="btnResetLimitSale" title="Lab: zera used_limit">Zerar uso</button>
+          </div>
+          <div class="act-nav">
+            <span class="dim" id="act1Hint">Valide o cliente para continuar</span>
+            <button type="button" class="btn-primary" id="btnToAct2" disabled>Continuar → O quê</button>
+          </div>
+        </div>
+
+        <div class="act-panel hidden" data-panel="2" id="act2">
+          <header class="act-head">
+            <h1>O que vai na venda?</h1>
+            <p>Busque o produto e monte o carrinho com o cliente ao lado.</p>
+          </header>
+          <div class="search-bar">
             <input id="productQuery" placeholder="Buscar por nome ou código…" />
             <button type="button" class="btn-primary" id="btnSearch">Buscar</button>
           </div>
-          <div class="grid" id="productGrid"></div>
+          <div class="cart-stage">
+            <div class="cart-main">
+              <div class="section-label"><span id="productCount">0</span> produtos</div>
+              <div class="product-grid" id="productGrid"></div>
+            </div>
+            <aside class="cart-rail">
+              <div class="section-label">Carrinho da venda</div>
+              <div id="cartLines" class="cart-lines empty">Nenhum item ainda.</div>
+              <div class="cart-total"><span>Total</span><strong id="cartTotal">R$ 0,00</strong></div>
+              <button type="button" class="btn-ghost btn-block" id="btnClearCart">Limpar carrinho</button>
+            </aside>
+          </div>
+          <input type="hidden" id="cartItem" value="SKU-42" />
+          <input type="hidden" id="cartQty" value="1" />
+          <div class="act-nav">
+            <button type="button" class="btn-secondary" id="btnBackAct1">← Quem</button>
+            <button type="button" class="btn-primary" id="btnToAct3" disabled>Continuar → Como pagar</button>
+          </div>
+        </div>
+
+        <div class="act-panel hidden" data-panel="3" id="act3">
+          <header class="act-head">
+            <h1>Como prefere pagar?</h1>
+            <p>Escolha a condição. No financiado, a parcela que cabe no bolso.</p>
+          </header>
+          <div class="pay-grid" id="payGrid">
+            <label class="pay-option"><input type="radio" name="payType" value="avista" checked /><span>À vista</span><small>Dinheiro / espécie</small></label>
+            <label class="pay-option"><input type="radio" name="payType" value="cartao" /><span>Cartão</span><small>Crédito ou débito</small></label>
+            <label class="pay-option"><input type="radio" name="payType" value="pix" /><span>PIX</span><small>Na hora</small></label>
+            <label class="pay-option"><input type="radio" name="payType" value="cdc" /><span>CDC</span><small>Crediare</small></label>
+            <label class="pay-option"><input type="radio" name="payType" value="cdci" /><span>CDCI</span><small>Financeira 25</small></label>
+          </div>
+          <div id="financedBox" class="financed hidden">
+            <div class="limits-mini" id="cartLimitsMini">Consultando crédito…</div>
+            <div class="section-label row-between">
+              <span id="plansHint">Escolha a parcela</span>
+              <button type="button" class="btn-ghost" id="btnPlans">Recarregar planos</button>
+            </div>
+            <div class="plan-bands" id="planList"></div>
+          </div>
+          <div class="summary-line" id="paySummary"></div>
+          <div class="act-nav">
+            <button type="button" class="btn-secondary" id="btnBackAct2">← O quê</button>
+            <button type="button" class="btn-primary" id="btnToAct4" disabled>Continuar → Fechar</button>
+          </div>
+        </div>
+
+        <div class="act-panel hidden" data-panel="4" id="act4">
+          <header class="act-head">
+            <h1>Fechar a pré-venda</h1>
+            <p>Uma olhada final — e a ASS sai pronta.</p>
+          </header>
+          <div class="close-summary" id="assSummary"></div>
+          <div class="act-nav">
+            <button type="button" class="btn-secondary" id="btnBackAct3">← Como pagar</button>
+            <button type="button" class="btn-primary btn-lg" id="btnPreSale" disabled>Gerar pré-venda</button>
+          </div>
+          <div id="saleResult" class="sale-feedback"></div>
+        </div>
+      </section>
+      <!-- Módulos -->
+      <section class="view hidden" id="view-products">
+        <div class="mod-panel">
+          <header class="act-head">
+            <h1>Produtos</h1>
+            <p>Catálogo da loja — adicione direto na venda.</p>
+          </header>
+          <div class="search-bar">
+            <input id="modProductQuery" placeholder="Buscar por nome ou código…" />
+            <button type="button" class="btn-primary" id="btnModSearch">Buscar</button>
+          </div>
+          <div class="product-grid" id="modProductGrid"></div>
         </div>
       </section>
 
       <section class="view hidden" id="view-stock">
-        <div class="card narrow">
-          <h2>Consulta de estoque</h2>
+        <div class="mod-panel narrow">
+          <header class="act-head">
+            <h1>Estoque</h1>
+            <p>Consulta física por item.</p>
+          </header>
           <label>Item ID<input id="stockItem" value="SKU-42" /></label>
-          <button type="button" class="btn-primary" id="btnStock">Consultar</button>
-          <pre class="result" id="stockResult"></pre>
+          <div class="row gap">
+            <button type="button" class="btn-primary" id="btnStock">Consultar</button>
+            <button type="button" class="btn-secondary" id="btnStockToCart">Add à venda</button>
+          </div>
+          <div id="stockCard" class="info-card">Informe um item.</div>
+          <div class="chip-row" id="stockShortcuts"></div>
         </div>
       </section>
 
       <section class="view hidden" id="view-customer">
-        <div class="card narrow">
-          <h2>Cliente</h2>
-          <label>CPF<input id="cpf" value="52998224725" /></label>
-          <button type="button" class="btn-primary" id="btnCustomer">Buscar</button>
-          <pre class="result" id="customerResult"></pre>
-        </div>
-      </section>
-
-      <section class="view hidden" id="view-cart">
-        <div class="card">
-          <h2>Carrinho / Condições de pagamento</h2>
-          <div class="row wrap">
-            <label>Item<input id="cartItem" value="SKU-42" /></label>
-            <label>Qtd<input id="cartQty" type="number" min="1" value="1" /></label>
-            <label>CPF<input id="cartCpf" value="52998224725" /></label>
+        <div class="mod-panel narrow">
+          <header class="act-head">
+            <h1>Cliente</h1>
+            <p>Busca e limites CDC / CDCI / CP.</p>
+          </header>
+          <label>CPF / CNPJ<input id="modCpf" value="52998224725" /></label>
+          <button type="button" class="btn-primary" id="btnModCustomer">Buscar cliente</button>
+          <div id="modCustomerCard" class="info-card">Busque um CPF da massa lab.</div>
+          <div class="limit-tabs" id="modLimitTabs" style="margin-top:1rem">
+            <button type="button" class="chip active" data-limit="CDC">CDC</button>
+            <button type="button" class="chip" data-limit="CDCI">CDCI</button>
+            <button type="button" class="chip" data-limit="CP">CP</button>
           </div>
-
-          <fieldset class="pay-fieldset">
-            <legend>Forma de pagamento</legend>
-            <label class="radio"><input type="radio" name="payType" value="avista" checked /> À vista</label>
-            <label class="radio"><input type="radio" name="payType" value="cartao" /> Cartão</label>
-            <label class="radio"><input type="radio" name="payType" value="pix" /> PIX</label>
-            <label class="radio"><input type="radio" name="payType" value="cdc" /> CDC (Crediare)</label>
-            <label class="radio"><input type="radio" name="payType" value="cdci" /> CDCI (Fin25)</label>
-          </fieldset>
-
-          <div id="financedBox" class="financed hidden">
-            <div class="row wrap">
-              <button type="button" class="btn-secondary" id="btnLimits">Consultar limites</button>
-              <button type="button" class="btn-secondary" id="btnPlans">Ver mais planos</button>
-            </div>
-            <pre class="result" id="limitsResult"></pre>
-            <label>Plano<select id="planSelect"><option value="">Selecione um plano…</option></select></label>
-          </div>
-
-          <button type="button" class="btn-primary" id="btnPreSale" disabled>Criar pré-venda (ASS)</button>
-          <pre class="result" id="saleResult"></pre>
+          <div id="modLimitsCard" class="info-card">Limites aparecem após a busca.</div>
+          <button type="button" class="btn-ghost btn-block" id="btnResetLimit" disabled>Zerar uso do limite (lab)</button>
+          <button type="button" class="btn-secondary btn-block" id="btnModCustomerToSale" disabled>Usar na venda</button>
         </div>
       </section>
 
       <section class="view hidden" id="view-monitor">
-        <div class="card">
-          <div class="toolbar">
-            <h2>Monitor de Propostas</h2>
-            <button type="button" class="btn-secondary" id="btnRefreshProposals">Atualizar</button>
+        <div class="mod-panel">
+          <div class="sheet-head">
+            <div>
+              <h1>Monitor de Propostas</h1>
+              <p class="dim mb0">CDC / CDCI — integrar na financeira</p>
+            </div>
+            <div class="row gap">
+              <select id="monitorFilter">
+                <option value="all">Todos</option>
+                <option value="pending_integration">Aguardando financeira</option>
+                <option value="integrated">Integradas</option>
+              </select>
+              <button type="button" class="btn-secondary" id="btnRefreshProposals">Atualizar</button>
+            </div>
           </div>
-          <p class="dim">Propostas CDC / CDCI após CreatePreSales.</p>
-          <div class="table-wrap">
-            <table class="data-table" id="proposalsTable">
-              <thead>
-                <tr>
-                  <th>Proposta</th>
-                  <th>ASS</th>
-                  <th>Cliente</th>
-                  <th>Tipo</th>
-                  <th>Parcelas</th>
-                  <th>Valor</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
+          <p class="empty-state hidden" id="proposalsEmpty">Nenhuma proposta ainda.</p>
+          <div class="proposal-grid" id="proposalsGrid"></div>
         </div>
       </section>
 
       <section class="view hidden" id="view-cp">
-        <div class="card">
-          <div class="toolbar">
-            <h2>Monitor de Crédito Pessoal</h2>
-            <button type="button" class="btn-secondary" id="btnRefreshCp">Atualizar</button>
-          </div>
-          <div class="cp-form">
-            <h3>Incluir proposta CP</h3>
-            <div class="row wrap">
+        <div class="mod-panel">
+          <header class="act-head">
+            <h1>Crédito Pessoal</h1>
+            <p>Empréstimo fora do carrinho de produto.</p>
+          </header>
+          <div class="cart-stage">
+            <div>
               <label>CPF<input id="cpCpf" value="52998224725" /></label>
               <label>Valor (R$)<input id="cpAmount" type="number" min="100" step="50" value="1000" /></label>
-              <label>Parcelas<input id="cpInstallments" type="number" min="1" value="12" /></label>
+              <label>Parcelas
+                <select id="cpInstallments">
+                  <option value="6">6x</option>
+                  <option value="12" selected>12x</option>
+                  <option value="18">18x</option>
+                  <option value="24">24x</option>
+                </select>
+              </label>
+              <div class="sim-box" id="cpSim">Parcela estimada: —</div>
+              <button type="button" class="btn-primary btn-block" id="btnCreateCp" disabled>Incluir proposta CP</button>
+              <div id="cpCreateResult" class="sale-feedback"></div>
             </div>
-            <button type="button" class="btn-primary" id="btnCreateCp" disabled>Incluir Proposta</button>
-            <pre class="result" id="cpCreateResult"></pre>
+            <div>
+              <div class="section-label">Monitor CP</div>
+              <div class="proposal-grid" id="cpGrid"></div>
+            </div>
           </div>
-          <div class="table-wrap">
-            <table class="data-table" id="cpTable">
-              <thead>
-                <tr>
-                  <th>Proposta</th>
-                  <th>Cliente</th>
-                  <th>Valor</th>
-                  <th>Parcelas</th>
-                  <th>Status</th>
-                  <th>Financeira</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="view hidden" id="view-lia">
-        <div class="card chat-card">
-          <h2>IA Colombo</h2>
-          <div class="chat" id="chatBox"></div>
-          <form class="chat-form" id="chatForm">
-            <input id="chatInput" placeholder="Pergunte sobre produto, CDC, CDCI, CP…" required />
-            <button type="submit" class="btn-primary">Enviar</button>
-          </form>
         </div>
       </section>
     </main>
   </div>
-  <script src="/static/app.js"></script>
+
+  <!-- Sheets -->
+  <div class="sheet-backdrop hidden" id="sheetBackdrop"></div>
+
+  <aside class="sheet hidden" id="sheetSuccess" aria-label="Pré-venda criada">
+    <div class="sheet-handle"></div>
+    <div class="success-mark" aria-hidden="true">✓</div>
+    <h2 id="successTitle">Pré-venda pronta</h2>
+    <p id="successLead" class="dim">—</p>
+    <div class="sheet-actions">
+      <button type="button" class="btn-primary" id="btnIntegrateFromSuccess">Integrar financeira</button>
+      <button type="button" class="btn-secondary" id="btnCloseSuccess">Continuar vendendo</button>
+      <button type="button" class="btn-ghost" id="btnSuccessToMonitor">Abrir Monitor</button>
+    </div>
+  </aside>
+
+  <div class="obs-dock hidden" id="obsDock" aria-label="Rastreio da jornada">
+    <div class="obs-dock-head">
+      <strong>Rastreio</strong>
+      <span class="dim" id="obsTestRun">—</span>
+    </div>
+    <div class="obs-dock-meta">
+      <span>step <em id="obsStep">—</em></span>
+      <span>HTTP <em id="obsStatus">—</em></span>
+      <span>trace <em id="obsTrace">—</em></span>
+    </div>
+    <div class="obs-dock-links">
+      <a id="obsLinkJaegerTrace" href="#" target="_blank" rel="noopener">Trace no Jaeger</a>
+      <a id="obsLinkJaegerJourney" href="#" target="_blank" rel="noopener">Jornada no Jaeger</a>
+      <a id="obsLinkGraylogTrace" href="#" target="_blank" rel="noopener">Logs do trace</a>
+      <a id="obsLinkGraylogJourney" href="#" target="_blank" rel="noopener">Logs da jornada</a>
+      <a id="obsLinkSpm" href="http://127.0.0.1:16686/monitor" target="_blank" rel="noopener">SPM desta função</a>
+    </div>
+  </div>
+
+  <div class="toast-host" id="toastHost"></div>
+  <div class="busy hidden" id="busy"><div class="spinner"></div><span id="busyText">Processando…</span></div>
+
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>

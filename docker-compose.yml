@@ -129,7 +129,7 @@ services:
     profiles: ["https-le"]
 
   graylog-init:
-    image: curlimages/curl:8.12.1
+    image: python:3.12-alpine
     container_name: graylog-init
     networks: [graylog]
     depends_on:
@@ -142,7 +142,15 @@ services:
       GRAYLOG_PASSWORD: ${GRAYLOG_ROOT_PASSWORD:-admin}
     volumes:
       - ./scripts/bootstrap-inputs.sh:/bootstrap-inputs.sh:ro
-    entrypoint: ["/bin/sh", "/bootstrap-inputs.sh"]
+      - ./scripts/bootstrap-dashboards.py:/bootstrap-dashboards.py:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        apk add --no-cache curl >/dev/null
+        /bin/sh /bootstrap-inputs.sh
+        python /bootstrap-dashboards.py
+
 
   postgres:
     image: postgres:16-alpine
@@ -165,16 +173,68 @@ services:
       retries: 20
 
   jaeger:
-    image: jaegertracing/all-in-one:1.64
+    image: jaegertracing/all-in-one:1.76.0
     container_name: lab-jaeger
     restart: unless-stopped
     networks: [graylog]
+    depends_on:
+      - prometheus
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+      METRICS_STORAGE_TYPE: prometheus
+      PROMETHEUS_SERVER_URL: http://prometheus:9090
+      PROMETHEUS_QUERY_NORMALIZE_CALLS: "true"
+      PROMETHEUS_QUERY_NORMALIZE_DURATION: "true"
+      PROMETHEUS_QUERY_SUPPORT_SPANMETRICS_CONNECTOR: "true"
+    command:
+      - --query.ui-config=/etc/jaeger/ui-config.json
+    volumes:
+      - ./jaeger/ui-config.json:/etc/jaeger/ui-config.json:ro
+    # UI sobe via jaeger-proxy (corrige /api/metrics/services). OTLP só na rede interna.
+    expose:
+      - "16686"
+
+  jaeger-proxy:
+    image: nginx:1.27-alpine
+    container_name: lab-jaeger-proxy
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      - jaeger
     ports:
-      - "16686:16686"
+      - "16686:80"
+    volumes:
+      - ./jaeger/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    container_name: lab-otel-collector
+    restart: unless-stopped
+    networks: [graylog]
+    depends_on:
+      - jaeger
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
       - "4317:4317"
       - "4318:4318"
+      - "8889:8889"
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: lab-prometheus
+    restart: unless-stopped
+    networks: [graylog]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
 
   app:
     build: ./app
@@ -188,6 +248,8 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       APP_NAME: assistente-vendas
       GELF_HOST: graylog
@@ -197,7 +259,7 @@ services:
       DB_POOL_SIZE: "3"
       DB_MAX_OVERFLOW: "2"
       DB_POOL_TIMEOUT: "3"
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       ENV: lab
     ports:
       - "8080:8080"
@@ -221,3 +283,4 @@ volumes:
   caddy_data:
   caddy_config:
   postgres_data:
+  prometheus_data:
