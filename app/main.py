@@ -19,8 +19,38 @@ from common import db_session, get_engine, instrument_flask, ping_db, setup_logg
 SERVICE = os.getenv("APP_NAME", "assistente-vendas")
 PORT = int(os.getenv("PORT", "8080"))
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-JAEGER_UI = os.getenv("JAEGER_UI_URL", "http://127.0.0.1:16686")
-GRAYLOG_UI = os.getenv("GRAYLOG_UI_URL", "http://127.0.0.1:9000")
+JAEGER_UI = os.getenv("JAEGER_UI_URL", "http://127.0.0.1:16686").rstrip("/")
+GRAYLOG_UI = os.getenv("GRAYLOG_UI_URL", "http://127.0.0.1:9000").rstrip("/")
+
+
+def _obs_ui_bases() -> tuple[str, str]:
+    """Bases Jaeger/Graylog para deep links no browser (não usar 127.0.0.1 remoto)."""
+    host_hdr = (request.headers.get("X-Forwarded-Host") or request.host or "").split(",")[0].strip()
+    hostname = host_hdr.split(":")[0] if host_hdr else "127.0.0.1"
+    local = hostname in {"127.0.0.1", "localhost", ""}
+
+    jaeger_env = os.getenv("JAEGER_UI_URL", "").rstrip("/")
+    graylog_env = os.getenv("GRAYLOG_UI_URL", "").rstrip("/")
+
+    if jaeger_env and "127.0.0.1" not in jaeger_env and "localhost" not in jaeger_env:
+        jaeger = jaeger_env
+    elif local:
+        jaeger = JAEGER_UI
+    else:
+        jaeger = f"http://{hostname}:16686"
+
+    if graylog_env and "127.0.0.1" not in graylog_env and "localhost" not in graylog_env:
+        graylog = graylog_env
+    elif local:
+        graylog = GRAYLOG_UI
+    elif "duckdns" in hostname or hostname.endswith(".nip.io"):
+        # Lab EC2: Graylog atrás do Caddy/LE na 443
+        graylog = f"https://{hostname}"
+    else:
+        graylog = f"http://{hostname}:9000"
+
+    return jaeger, graylog
+
 
 logger = setup_logging(SERVICE)
 tracer = setup_tracing(SERVICE)
@@ -282,23 +312,24 @@ def _after(response: Any) -> Any:
         response.headers["X-Journey-Step"] = g.journey_step
     tid, _ = _ids()
     spm = _spm_service()
+    jaeger_ui, graylog_ui = _obs_ui_bases()
     response.headers["X-Obs-Domain"] = _lab_domain()
     response.headers["X-Obs-Spm-Service"] = spm
-    response.headers["X-Obs-Jaeger-Spm"] = f"{JAEGER_UI}/monitor"
+    response.headers["X-Obs-Jaeger-Spm"] = f"{jaeger_ui}/monitor"
     if tid:
         response.headers["X-Trace-Id"] = tid
         # Deep links for the UI obs dock
-        response.headers["X-Obs-Jaeger"] = f"{JAEGER_UI}/trace/{tid}"
+        response.headers["X-Obs-Jaeger"] = f"{jaeger_ui}/trace/{tid}"
         if g.test_run_id:
             tags = json.dumps({"test_run.id": g.test_run_id}, separators=(",", ":"))
             response.headers["X-Obs-Jaeger-Journey"] = (
-                f"{JAEGER_UI}/search?service={quote(spm, safe='')}&tags={quote(tags)}"
+                f"{jaeger_ui}/search?service={quote(spm, safe='')}&tags={quote(tags)}"
             )
             response.headers["X-Obs-Graylog-Journey"] = (
-                f"{GRAYLOG_UI}/search?q=test_run_id%3A%22{quote(g.test_run_id, safe='')}%22&rangetype=relative&relative=86400"
+                f"{graylog_ui}/search?q=test_run_id%3A%22{quote(g.test_run_id, safe='')}%22&rangetype=relative&relative=86400"
             )
         response.headers["X-Obs-Graylog-Trace"] = (
-            f"{GRAYLOG_UI}/search?q=trace_id%3A{tid}&rangetype=relative&relative=86400"
+            f"{graylog_ui}/search?q=trace_id%3A{tid}&rangetype=relative&relative=86400"
         )
 
     span = trace.get_current_span()

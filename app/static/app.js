@@ -12,6 +12,41 @@ function newRequestId() {
   return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Host público da página (EC2/DuckDNS) — nunca deixar 127.0.0.1 nos links de Rastreio. */
+function publicHostname() {
+  return window.location.hostname || "127.0.0.1";
+}
+
+function isLocalHost(h = publicHostname()) {
+  return h === "127.0.0.1" || h === "localhost";
+}
+
+function jaegerBase() {
+  const h = publicHostname();
+  return isLocalHost(h) ? "http://127.0.0.1:16686" : `http://${h}:16686`;
+}
+
+function graylogBase() {
+  const h = publicHostname();
+  if (isLocalHost(h)) return "http://127.0.0.1:9000";
+  if (h.includes("duckdns.org") || h.endsWith(".nip.io")) return `https://${h}`;
+  return `http://${h}:9000`;
+}
+
+/** Reescreve 127.0.0.1 → host atual (headers antigos / links estáticos). */
+function publicizeUrl(url) {
+  if (!url) return url;
+  return String(url)
+    .replace(/https?:\/\/(127\.0\.0\.1|localhost):16686/g, jaegerBase())
+    .replace(/https?:\/\/(127\.0\.0\.1|localhost):9000/g, graylogBase());
+}
+
+function rewriteStaticObsLinks() {
+  document.querySelectorAll('a[href*="127.0.0.1"], a[href*="localhost"]').forEach((a) => {
+    a.href = publicizeUrl(a.getAttribute("href"));
+  });
+}
+
 function ensureTestRunId() {
   let id = sessionStorage.getItem(TEST_RUN_KEY);
   if (!id) {
@@ -143,21 +178,26 @@ function recordObs(res, step) {
     lastStatus: String(res.status),
     domain,
     spmService,
-    jaegerTrace: res.headers.get("X-Obs-Jaeger") || (traceId ? `http://127.0.0.1:16686/trace/${traceId}` : ""),
-    jaegerJourney:
+    jaegerTrace: publicizeUrl(
+      res.headers.get("X-Obs-Jaeger") || (traceId ? `${jaegerBase()}/trace/${traceId}` : "")
+    ),
+    jaegerJourney: publicizeUrl(
       res.headers.get("X-Obs-Jaeger-Journey") ||
-      `http://127.0.0.1:16686/search?service=${encodeURIComponent(spmService)}&tags=${encodeURIComponent(
-        JSON.stringify({ "test_run.id": ensureTestRunId() })
-      )}`,
-    jaegerSpm: res.headers.get("X-Obs-Jaeger-Spm") || "http://127.0.0.1:16686/monitor",
-    graylogTrace:
+        `${jaegerBase()}/search?service=${encodeURIComponent(spmService)}&tags=${encodeURIComponent(
+          JSON.stringify({ "test_run.id": ensureTestRunId() })
+        )}`
+    ),
+    jaegerSpm: publicizeUrl(res.headers.get("X-Obs-Jaeger-Spm") || `${jaegerBase()}/monitor`),
+    graylogTrace: publicizeUrl(
       res.headers.get("X-Obs-Graylog-Trace") ||
-      (traceId
-        ? `http://127.0.0.1:9000/search?q=trace_id%3A${traceId}&rangetype=relative&relative=86400`
-        : ""),
-    graylogJourney:
+        (traceId
+          ? `${graylogBase()}/search?q=trace_id%3A${traceId}&rangetype=relative&relative=86400`
+          : "")
+    ),
+    graylogJourney: publicizeUrl(
       res.headers.get("X-Obs-Graylog-Journey") ||
-      `http://127.0.0.1:9000/search?q=test_run_id%3A%22${encodeURIComponent(ensureTestRunId())}%22&rangetype=relative&relative=86400`,
+        `${graylogBase()}/search?q=test_run_id%3A%22${encodeURIComponent(ensureTestRunId())}%22&rangetype=relative&relative=86400`
+    ),
   };
   renderObsDock();
 }
@@ -181,7 +221,7 @@ function renderObsDock() {
   graylogTrace.href = o.graylogTrace || "#";
   graylogJourney.href = o.graylogJourney || "#";
   if (spm) {
-    spm.href = o.jaegerSpm || "http://127.0.0.1:16686/monitor";
+    spm.href = o.jaegerSpm || `${jaegerBase()}/monitor`;
     spm.textContent = o.spmService ? `SPM · ${o.spmService.replace("assistente-", "")}` : "SPM desta função";
   }
   jaegerTrace.classList.toggle("disabled", !o.jaegerTrace);
@@ -1177,6 +1217,7 @@ document.getElementById("btnCreateCp").onclick = async () => {
 };
 
 /* boot */
+rewriteStaticObsLinks();
 refreshChrome();
 renderCart();
 if (isLoggedIn()) enterStudio();
