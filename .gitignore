@@ -11,3 +11,4 @@ nginx/certs/*.pem
 
 jmeter/results/
 *.jtl
+.venv-docs/
