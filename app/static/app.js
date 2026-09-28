@@ -2,6 +2,16 @@ const SESSION_KEY = "assistente_lab_session";
 const CART_KEY = "assistente_lab_cart";
 const TEST_RUN_KEY = "assistente_lab_test_run";
 
+/** UUID seguro também em HTTP (DuckDNS:8080 não é secure context → sem crypto.randomUUID). */
+function newRequestId() {
+  try {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch (_) {}
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function ensureTestRunId() {
   let id = sessionStorage.getItem(TEST_RUN_KEY);
   if (!id) {
@@ -111,7 +121,7 @@ const JOURNEY = {
 
 function headers(json = true, step = "") {
   const h = {
-    "X-Request-Id": crypto.randomUUID(),
+    "X-Request-Id": newRequestId(),
     "X-Test-Run-Id": ensureTestRunId(),
     "X-Journey-Step": journeyStep(step),
   };
