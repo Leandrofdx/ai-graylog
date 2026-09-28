@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -376,6 +377,8 @@ def _curl_env() -> dict[str, str]:
 
 
 def api(method: str, path: str, body: Any | None = None, *, accept_json: bool = True) -> Any:
+    """Chama a API Graylog via curl. Body grande vai em arquivo (-d @file) — evita
+    OSError [Errno 7] Argument list too long no dashboard 'por funcionalidade'."""
     cmd = [
         "curl",
         "-sS",
@@ -390,9 +393,21 @@ def api(method: str, path: str, body: Any | None = None, *, accept_json: bool = 
         method,
         f"{BASE}{path}",
     ]
-    if body is not None:
-        cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
-    p = subprocess.run(cmd, capture_output=True, text=True, env=_curl_env())
+    tmp_path: str | None = None
+    try:
+        if body is not None:
+            # Não passar JSON na argv — o search do dashboard estoura ARG_MAX no Alpine/EC2.
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                json.dump(body, fh, ensure_ascii=False)
+                tmp_path = fh.name
+            cmd += ["-H", "Content-Type: application/json", "--data-binary", f"@{tmp_path}"]
+        p = subprocess.run(cmd, capture_output=True, text=True, env=_curl_env())
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     if p.returncode != 0:
         raise RuntimeError(f"{method} {path} -> {p.stderr.strip() or p.stdout.strip() or p.returncode}")
     raw = p.stdout.strip()
