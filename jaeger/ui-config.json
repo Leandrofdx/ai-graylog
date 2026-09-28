@@ -44,8 +44,8 @@
         { "label": "Assistente UI", "url": "http://127.0.0.1:8080/" },
         { "label": "Swagger", "url": "http://127.0.0.1:8080/docs" },
         { "label": "Graylog (logs)", "url": "http://127.0.0.1:9000/" },
-        { "label": "Negócio · Overview", "url": "http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c69356" },
-        { "label": "Negócio · por funcionalidade", "url": "http://127.0.0.1:9000/dashboards/6ab869f1ebac73de29c6935f" },
+        { "label": "Negócio · Overview", "url": "http://127.0.0.1:9000/dashboards/6ab87939ebac73de29c6f4b7" },
+        { "label": "Negócio · por funcionalidade", "url": "http://127.0.0.1:9000/dashboards/6ab8793aebac73de29c6f4c4" },
         { "label": "Prometheus (SPM raw)", "url": "http://127.0.0.1:9090" }
       ]
     },

@@ -87,23 +87,28 @@ INSERT INTO staff (staff_id, name, password, store_id) VALUES
     ('vendedor2', 'Bruno Vendedor', 'lab123', '1001')
 ON CONFLICT (staff_id) DO NOTHING;
 
+-- Estoque no teto (999999) — InsufficientStock só sob bug/qty absurda.
 INSERT INTO products (item_id, name, price, stock, category) VALUES
-    ('SKU-7',  'Notebook Pro 15',     4599.90, 25, 'Informática'),
-    ('SKU-42', 'Mouse Wireless',       129.90, 120, 'Acessórios'),
-    ('SKU-99', 'Monitor 27 Full HD',  1899.00, 10, 'Informática'),
-    ('SKU-15', 'Teclado Mecânico',     499.00, 45, 'Acessórios'),
-    ('SKU-88', 'Smartphone X',        2499.00, 18, 'Telefonia')
+    ('SKU-7',  'Notebook Pro 15',     4599.90, 999999, 'Informática'),
+    ('SKU-42', 'Mouse Wireless',       129.90, 999999, 'Acessórios'),
+    ('SKU-99', 'Monitor 27 Full HD',  1899.00, 999999, 'Informática'),
+    ('SKU-15', 'Teclado Mecânico',     499.00, 999999, 'Acessórios'),
+    ('SKU-88', 'Smartphone X',        2499.00, 999999, 'Telefonia')
 ON CONFLICT (item_id) DO UPDATE SET
-    category = EXCLUDED.category;
+    category = EXCLUDED.category,
+    stock = GREATEST(products.stock, EXCLUDED.stock),
+    price = EXCLUDED.price,
+    name = EXCLUDED.name;
 
 INSERT INTO customers (cpf, name, account_num, wage) VALUES
     ('52998224725', 'Cliente Lab Um', 'ACC-100', 4200.00),
     ('39053344705', 'Cliente Lab Dois', 'ACC-200', 2800.00)
 ON CONFLICT (cpf) DO NOTHING;
 
+-- Crédito lab “infinito” + todas as linhas (CDC/CDCI/CP) nos dois CPFs.
 INSERT INTO credit_limits (cpf, available_limit, used_limit, product_types) VALUES
-    ('52998224725', 500000.00, 0.00, ARRAY['CDC','CDCI','CP']),
-    ('39053344705', 200000.00, 0.00, ARRAY['CDC','CP'])
+    ('52998224725', 999999999.00, 0.00, ARRAY['CDC','CDCI','CP']),
+    ('39053344705', 999999999.00, 0.00, ARRAY['CDC','CDCI','CP'])
 ON CONFLICT (cpf) DO UPDATE SET
     available_limit = EXCLUDED.available_limit,
     used_limit = EXCLUDED.used_limit,

@@ -70,6 +70,23 @@
         "responses": { "200": { "description": "Estoque físico" }, "404": { "description": "Não encontrado" } }
       }
     },
+    "/Stock/api/Stock/Restock": {
+      "post": {
+        "tags": ["Catalog"],
+        "summary": "Lab: repor estoque ao seed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "force": { "type": "boolean", "default": true } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Estoque reposto" } }
+      }
+    },
     "/Customer/api/Customer/FindByCpfCnpj": {
       "get": {
         "tags": ["Customer"],

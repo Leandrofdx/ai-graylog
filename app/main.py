@@ -50,13 +50,84 @@ PAYMENT_LABELS = {
     "cdci": "CDCI",
 }
 
+# Seed do lab — estoque e crédito “infinitos” (boot / Restock / ResetCreditLimit).
+SEED_STOCK: dict[str, int] = {
+    "SKU-7": 999_999,
+    "SKU-42": 999_999,
+    "SKU-99": 999_999,
+    "SKU-15": 999_999,
+    "SKU-88": 999_999,
+}
+SEED_CREDIT: dict[str, dict[str, Any]] = {
+    # CPF lab → limite absurdo + todas as linhas
+    "52998224725": {"available": 999_999_999.0, "types": ["CDC", "CDCI", "CP"]},
+    "39053344705": {"available": 999_999_999.0, "types": ["CDC", "CDCI", "CP"]},
+}
+
 
 def _payment_label(payment_type: str) -> str:
     return PAYMENT_LABELS.get(payment_type, payment_type or "—")
 
 
+def _restock_products(db: Any, *, force: bool = False) -> list[dict[str, Any]]:
+    """Repoe estoque ao seed. force=True aplica seed; senão só top-up se abaixo."""
+    out: list[dict[str, Any]] = []
+    for item_id, seed in SEED_STOCK.items():
+        if force:
+            row = db.execute(
+                text(
+                    "UPDATE products SET stock = :stock WHERE item_id = :id "
+                    "RETURNING item_id, name, stock"
+                ),
+                {"id": item_id, "stock": seed},
+            ).mappings().first()
+        else:
+            row = db.execute(
+                text(
+                    "UPDATE products SET stock = :stock "
+                    "WHERE item_id = :id AND stock < :stock "
+                    "RETURNING item_id, name, stock"
+                ),
+                {"id": item_id, "stock": seed},
+            ).mappings().first()
+            if not row:
+                row = db.execute(
+                    text("SELECT item_id, name, stock FROM products WHERE item_id = :id"),
+                    {"id": item_id},
+                ).mappings().first()
+        if row:
+            out.append({"itemId": row["item_id"], "name": row["name"], "stock": int(row["stock"])})
+    return out
+
+
+def _reset_credits(db: Any) -> list[dict[str, Any]]:
+    """Lab: available_limit = seed, used_limit = 0, product_types completos."""
+    out: list[dict[str, Any]] = []
+    for cpf, cfg in SEED_CREDIT.items():
+        row = db.execute(
+            text(
+                "UPDATE credit_limits SET "
+                "available_limit = :avail, used_limit = 0, "
+                "product_types = ARRAY['CDC','CDCI','CP']::text[] "
+                "WHERE cpf = :cpf "
+                "RETURNING cpf, available_limit, used_limit, product_types"
+            ),
+            {"cpf": cpf, "avail": cfg["available"]},
+        ).mappings().first()
+        if row:
+            out.append(
+                {
+                    "cpf": row["cpf"],
+                    "availableLimit": float(row["available_limit"]),
+                    "usedLimit": float(row["used_limit"]),
+                    "productTypes": list(row["product_types"] or []),
+                }
+            )
+    return out
+
+
 def _ensure_schema() -> None:
-    """Lab: garante coluna category (DBs já criados antes do campo)."""
+    """Lab: category + estoque no teto + crédito liberado (DBs persistidos)."""
     try:
         with db_session() as db:
             db.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Geral'"))
@@ -71,7 +142,15 @@ def _ensure_schema() -> None:
                     "ELSE COALESCE(NULLIF(category,''), 'Geral') END"
                 )
             )
+            restored = _restock_products(db, force=True)
+            credits = _reset_credits(db)
             db.commit()
+            logger.info(
+                "schema/stock/credit ensure ok products=%s credits=%s",
+                len(restored),
+                len(credits),
+                extra={"action": "LabEnsure", "items": len(restored), "credits": len(credits)},
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning("schema ensure skipped: %s", exc)
 
@@ -91,12 +170,20 @@ def _extra(**kwargs: Any) -> dict[str, Any]:
     duration_ms = (
         round((time.perf_counter() - started) * 1000, 2) if started is not None else None
     )
+    # http_path = URL real (com ids); http_route = template Flask (estável p/ dashboards)
+    route = ""
+    try:
+        if request.url_rule is not None:
+            route = str(request.url_rule.rule or "")
+    except RuntimeError:
+        route = ""
     data = {
         "service": SERVICE,
         "spm_service": _spm_service(),
         "lab_domain": domain,
         "http_method": request.method,
         "http_path": request.path,
+        "http_route": route or request.path,
         "request_id": getattr(g, "request_id", ""),
         "test_run_id": getattr(g, "test_run_id", ""),
         "journey_step": getattr(g, "journey_step", ""),
@@ -361,6 +448,29 @@ def search_products() -> Any:
         return _problem("DbPoolTimeout", 503, query=q)
 
 
+@app.post("/Stock/api/Stock/Restock")
+def restock() -> Any:
+    """Lab: repõe estoque ao seed (esgota com JMeter/UI). body opcional: {\"force\": true}."""
+    body = request.get_json(silent=True) or {}
+    force = bool(body.get("force", True))
+    try:
+        with db_session() as db:
+            items = _restock_products(db, force=force)
+            db.commit()
+        logger.info(
+            "stock restocked force=%s count=%s",
+            force,
+            len(items),
+            extra=_extra(action="StockRestock", force=force, items=len(items)),
+        )
+        _tag_span(**{"stock.restock": True, "stock.items": len(items)})
+        return jsonify({"status": "restocked", "force": force, "products": items})
+    except SATimeoutError:
+        return _problem("DbPoolTimeout", 503)
+    except OperationalError as exc:
+        return _problem("DbOperationalError", 503, {"detail": str(exc)})
+
+
 @app.get("/Stock/api/Stock/Find")
 def find_stock() -> Any:
     item_id = request.args.get("itemId") or request.args.get("sku")
@@ -487,33 +597,46 @@ def customer_limits() -> Any:
 
 @app.post("/Customer/api/ResetCreditLimit")
 def reset_credit_limit() -> Any:
-    """Lab: zera used_limit para repetir várias compras com o mesmo CPF."""
+    """Lab: repõe available_limit ao seed e zera used_limit (todos ou um CPF)."""
     body = request.get_json(silent=True) or {}
     cpf = str(body.get("cpf") or request.args.get("cpf") or "").strip()
-    if not cpf:
-        return _problem("ValidationError", 400, {"message": "cpf required"})
     try:
         with db_session() as db:
-            row = db.execute(
-                text(
-                    "UPDATE credit_limits SET used_limit = 0 "
-                    "WHERE cpf = :cpf RETURNING available_limit, used_limit, product_types"
-                ),
-                {"cpf": cpf},
-            ).mappings().first()
-            if not row:
-                return _problem("LimitsNotFound", 404, {"cpf": cpf}, cpf=cpf)
-        logger.info("credit limit reset cpf=%s", cpf, extra=_extra(cpf=cpf, action="CreditLimitReset"))
-        _tag_span(**{"customer.cpf": cpf, "credit.reset": True})
-        return jsonify(
-            {
-                "cpf": cpf,
-                "availableLimit": float(row["available_limit"]),
-                "usedLimit": float(row["used_limit"]),
-                "productTypes": list(row["product_types"] or []),
-                "status": "reset",
-            }
+            if cpf:
+                cfg = SEED_CREDIT.get(cpf) or {"available": 999_999_999.0, "types": ["CDC", "CDCI", "CP"]}
+                row = db.execute(
+                    text(
+                        "UPDATE credit_limits SET "
+                        "available_limit = :avail, used_limit = 0, "
+                        "product_types = ARRAY['CDC','CDCI','CP']::text[] "
+                        "WHERE cpf = :cpf "
+                        "RETURNING cpf, available_limit, used_limit, product_types"
+                    ),
+                    {"cpf": cpf, "avail": cfg["available"]},
+                ).mappings().first()
+                if not row:
+                    return _problem("LimitsNotFound", 404, {"cpf": cpf}, cpf=cpf)
+                db.commit()
+                items = [
+                    {
+                        "cpf": row["cpf"],
+                        "availableLimit": float(row["available_limit"]),
+                        "usedLimit": float(row["used_limit"]),
+                        "productTypes": list(row["product_types"] or []),
+                    }
+                ]
+            else:
+                items = _reset_credits(db)
+                db.commit()
+        logger.info(
+            "credit limit reset count=%s",
+            len(items),
+            extra=_extra(action="CreditLimitReset", cpf=cpf or "*", items=len(items)),
         )
+        _tag_span(**{"credit.reset": True, "credit.items": len(items)})
+        if cpf and len(items) == 1:
+            return jsonify({**items[0], "status": "reset"})
+        return jsonify({"status": "reset", "customers": items})
     except SATimeoutError:
         return _problem("DbPoolTimeout", 503, cpf=cpf)
 

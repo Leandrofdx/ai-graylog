@@ -8,3 +8,6 @@ __pycache__/
 .vscode/
 nginx/certs/*.pem
 !nginx/certs/.gitkeep
+
+jmeter/results/
+*.jtl

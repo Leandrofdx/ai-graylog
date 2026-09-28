@@ -38,6 +38,7 @@ CPF lab: `52998224725`
 - `POST /UserAuthentication/api/Authorize`
 - `GET /Products/api/Products/Search`
 - `GET /Stock/api/Stock/Find`
+- `POST /Stock/api/Stock/Restock` (lab: repõe estoque após JMeter)
 - `GET /Customer/api/Customer/FindByCpfCnpj`
 - `GET /Customer/api/CustomerLimits`
 - `POST /PaymentCondition/api/FinancialConditions/Find/{storeId}`
@@ -86,10 +87,20 @@ docker compose up -d --build
 
 ## JMeter
 
+Plano simples (jornada CDC/CDCI/CP):
+
 ```bash
 jmeter -n -t jmeter/sample-app.jmx -l /tmp/assistente.jtl
 ```
 
-Thread groups: **01 CDC**, **02 CDCI**, **03 CP**.
+Plano **Dash Beauty** (massa variada — CSV com SKU/CPF/staff/meios/buscas + browse + CP + erros):
+
+```bash
+cd jmeter && ./run-dash-beauty.sh
+# opcional: THREADS=8 LOOPS=15 RAMP=15 ./run-dash-beauty.sh
+# regenerar CSV/JMX: python3 gen_dash_beauty.py
+```
+
+Popula bem: vazão/p95 por endpoint, mix à vista/CDC/CDCI, funil `X-Journey-Step`, propostas, CP e alguns 4xx.
 
 Correlação: `X-Test-Run-Id`, `X-Request-Id`, `trace_id` (Graylog + Jaeger).

@@ -38,21 +38,48 @@ LEGACY_TITLES = (
 )
 SMOKE_TITLE = "Lab smoke dashboard"
 
-# Rotas esperadas por lab_domain (documentação + widget)
+# Inventário fixo e ordenado: só estes endpoints entram em cada aba (nada além).
 DOMAIN_ROUTES = {
-    "auth": "POST /UserAuthentication/api/Authorize",
-    "catalogo": "GET /Products/api/Products/Search",
-    "estoque": "GET /Stock/api/Stock/Find",
-    "cliente": "FindByCpfCnpj · CustomerLimits · ResetCreditLimit",
-    "pagamento": "FinancialConditions/Find · BatchSimulate",
-    "venda": "POST /SalesOrder/api/CreatePreSales",
-    "propostas": "GET Proposals · POST IntegrateProposal",
-    "cp": "PersonalCredit/Create · PersonalCredit/Proposals",
+    "auth": [
+        "POST /UserAuthentication/api/Authorize",
+    ],
+    "catalogo": [
+        "GET /Products/api/Products/Search",
+    ],
+    "estoque": [
+        "GET /Stock/api/Stock/Find",
+        "POST /Stock/api/Stock/Restock",
+    ],
+    "cliente": [
+        "GET /Customer/api/Customer/FindByCpfCnpj",
+        "GET /Customer/api/CustomerLimits",
+        "POST /Customer/api/ResetCreditLimit",
+    ],
+    "pagamento": [
+        "POST /PaymentCondition/api/FinancialConditions/Find/<store_id>",
+        "GET /PaymentCondition/api/PaymentCondition/Find/<store_id>",
+        "POST /InstallmentSimulator/api/InstallmentSimulator/BatchSimulate",
+    ],
+    "venda": [
+        "POST /SalesOrder/api/CreatePreSales",
+    ],
+    "propostas": [
+        "GET /MultiFinancial/api/Proposals",
+        "POST /MultiFinancial/api/IntegrateProposal",
+    ],
+    "cp": [
+        "POST /PersonalCredit/api/Create",
+        "GET /PersonalCredit/api/Proposals",
+    ],
 }
 
 SALES_Q = '(biz_event:sale_created OR message:"pre-sale created")'
 PROP_CREATED_Q = "biz_event:proposal_created"
 PROP_INTEGRATED_Q = "biz_event:proposal_integrated"
+# error_type vazio é enviado no access log — filtrar
+ERR_TYPED = 'error_type:* AND NOT error_type:""'
+ERR_HTTP = "http_status:>=400"
+ERR_ANY = f"(({ERR_TYPED}) OR ({ERR_HTTP}))"
 CALL_CHAIN_PATHS = (
     r'http_path:\/UserAuthentication\/api\/Authorize OR '
     r'http_path:\/Customer\/api\/Customer\/FindByCpfCnpj OR '
@@ -64,6 +91,282 @@ CALL_CHAIN_PATHS = (
     r'http_path:\/MultiFinancial\/api\/Proposals OR '
     r'http_path:\/MultiFinancial\/api\/IntegrateProposal'
 )
+
+
+def _escape_path(path: str) -> str:
+    return path.replace("/", r"\/")
+
+
+def _route_path_pattern(spec: str) -> tuple[str, str]:
+    """'METHOD /path/<id>' → (METHOD, lucene path com wildcards)."""
+    method, path = spec.split(" ", 1)
+    path = path.strip().replace("<store_id>", "*")
+    while "<" in path and ">" in path:
+        a, b = path.index("<"), path.index(">")
+        path = path[:a] + "*" + path[b + 1 :]
+    return method.upper(), path
+
+
+def domain_calls_query(key: str) -> str:
+    """Somente os endpoints do inventário DOMAIN_ROUTES desta funcionalidade."""
+    specs = DOMAIN_ROUTES.get(key) or []
+    if not specs:
+        return f"lab_domain:{key} AND service:assistente* AND _exists_:http_path"
+    parts: list[str] = []
+    for spec in specs:
+        method, path = _route_path_pattern(spec)
+        esc = _escape_path(path)
+        # Filtrar por path (+ method). http_path cobre logs sem http_route.
+        parts.append(f"(http_method:{method} AND http_path:{esc})")
+    return f"service:assistente* AND ({' OR '.join(parts)})"
+
+
+def add_latency_vazao_strip(tab: TabBuilder, scope: str, *, title_suffix: str = "") -> None:
+    """Faixa padrão: Vazão + Média + Máx + p95 + erros + barra de vazão no tempo."""
+    suf = f" · {title_suffix}" if title_suffix else ""
+    q = scope
+    q_lat = f"({scope}) AND _exists_:duration_ms" if "duration_ms" not in scope else scope
+
+    tab.add_agg(
+        f"Vazão (qtd){suf}",
+        query=q,
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=1,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        f"Média (ms){suf}",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_avg("duration_ms")],
+        series_fns=["avg(duration_ms)"],
+        col=3,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        f"Máx (ms){suf}",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_max("duration_ms")],
+        series_fns=["max(duration_ms)"],
+        col=5,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        f"p95 (ms){suf}",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_p95()],
+        series_fns=["percentile(duration_ms,95.0)"],
+        col=7,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        f"Erros tipados{suf}",
+        query=f"({q}) AND ({ERR_TYPED})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=9,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        f"HTTP 4xx/5xx{suf}",
+        query=f"({q}) AND ({ERR_HTTP})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=11,
+        width=2,
+        height=2,
+    )
+    tab.next_row(2)
+
+    tab.add_agg(
+        f"Vazão no tempo ≈ TPS{suf}",
+        query=q,
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        row_pivots=[time_pivot()],
+        col=1,
+        width=6,
+        height=3,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
+    )
+    tab.add_agg(
+        f"Endpoints · vazão + média + máx + p95{suf}",
+        query=q_lat,
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        # 1 pivot só — 2 níveis (method+path) deixa métricas em branco no Graylog 7 UI
+        row_groups=[values_group("http_path", 25)],
+        row_pivots=[values_pivot("http_path", 25)],
+        col=7,
+        width=6,
+        height=3,
+        sort_count_desc=True,
+        rollup=False,
+    )
+    tab.next_row(3)
+
+
+def domain_sequence_label(key: str) -> str:
+    specs = DOMAIN_ROUTES.get(key) or []
+    return " → ".join(f"{i}.{s}" for i, s in enumerate(specs, 1))
+
+
+def domain_inventory_markdown(key: str, label: str | None = None) -> str:
+    """Lista fixa dos endpoints que compõem a funcionalidade (não depende de tráfego)."""
+    specs = DOMAIN_ROUTES.get(key) or []
+    lines = [
+        f"**{label or key}** — {len(specs)} endpoint(s) desta funcionalidade",
+        "",
+        "| # | Método | Endpoint |",
+        "| ---: | --- | --- |",
+    ]
+    for i, spec in enumerate(specs, 1):
+        method, path = spec.split(" ", 1)
+        lines.append(f"| {i} | `{method}` | `{path}` |")
+    lines.append("")
+    lines.append("**Sequência:** " + " → ".join(str(i) for i in range(1, len(specs) + 1)))
+    return "\n".join(lines)
+
+
+def add_domain_routes(tab: TabBuilder, key: str) -> None:
+    """KPIs + tabela dinâmica (só endpoints desta funcionalidade) + vazão."""
+    q = domain_calls_query(key)
+    q_lat = f"({q}) AND _exists_:duration_ms"
+    n = len(DOMAIN_ROUTES.get(key) or [])
+
+    # 1) KPIs — vazão / média / máx / p95 / erros
+    tab.add_agg(
+        "Vazão (qtd)",
+        query=q,
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=1,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Média (ms)",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_avg("duration_ms")],
+        series_fns=["avg(duration_ms)"],
+        col=3,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Máx (ms)",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_max("duration_ms")],
+        series_fns=["max(duration_ms)"],
+        col=5,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "p95 (ms)",
+        query=q_lat,
+        visualization="numeric",
+        series=[series_p95()],
+        series_fns=["percentile(duration_ms,95.0)"],
+        col=7,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Erros tipados",
+        query=f"({q}) AND ({ERR_TYPED})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=9,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "HTTP 4xx/5xx",
+        query=f"({q}) AND ({ERR_HTTP})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=11,
+        width=2,
+        height=2,
+    )
+    tab.next_row(2)
+
+    # 2) Lista dinâmica — 1 pivot (http_path); method já está no filtro do inventário
+    tab.add_agg(
+        f"Lista de endpoints · {tab.title} ({n})",
+        query=q_lat,
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("http_path", 25)],
+        row_pivots=[values_pivot("http_path", 25)],
+        height=max(4, 2 + n),
+        sort_count_desc=True,
+        rollup=False,
+    )
+    tab.next_row(max(4, 2 + n))
+
+    # 3) Vazão no tempo
+    tab.add_agg(
+        "Vazão no tempo ≈ TPS",
+        query=q,
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        row_pivots=[time_pivot()],
+        col=1,
+        width=6,
+        height=3,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
+    )
+    tab.add_agg(
+        "Vazão por endpoint no tempo",
+        query=q,
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        row_pivots=[time_pivot()],
+        column_groups=[values_group("http_path", 12)],
+        column_pivots=[values_pivot("http_path", 12)],
+        col=7,
+        width=6,
+        height=3,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
+    )
+    tab.next_row(3)
+
+    tab.add_messages(
+        f"Logs · {domain_sequence_label(key)}"[:180],
+        query=q,
+        fields=["timestamp", "http_method", "http_path", "http_route", "duration_ms", "http_status", "journey_step", "biz_event", "message"],
+        height=3,
+    )
+    tab.next_row(3)
 
 
 def _curl_env() -> dict[str, str]:
@@ -183,29 +486,82 @@ def uid() -> str:
     return str(uuid.uuid4())
 
 
-def domain_query(key: str, path_fallback: str) -> str:
-    # Preferir lab_domain; path fallback sem leading '*' (OpenSearch rejeita).
-    return f"(lab_domain:{key} OR ({path_fallback})) AND service:assistente*"
+def domain_query(key: str, path_fallback: str = "") -> str:
+    """Aba = somente endpoints do inventário DOMAIN_ROUTES (path_fallback ignorado)."""
+    return domain_calls_query(key)
+
+
+def series_label(fn: str) -> str:
+    """Rótulos amigáveis — Graylog 7 não tem unit currency; amount = R$.
+    Evitar acentos nos nomes de série de latência: bug de UI deixa células em branco.
+
+    IMPORTANTE (Graylog 7 DataTable): o search_type.series[].id PRECISA ser o
+    effectiveName (= config.name do widget). A UI monta as células com
+    lodash.get(row, [..., effectiveName]). Se o id for "count()" e o name for
+    "Vazao (qtd)", a tabela fica com colunas vazias mesmo com dados na API.
+    """
+    return {
+        "count()": "Vazao (qtd)",
+        "sum(amount)": "Total (R$)",
+        "avg(amount)": "Ticket medio (R$)",
+        "avg(installments)": "Parcelas medias",
+        "avg(duration_ms)": "Media (ms)",
+        "max(duration_ms)": "Max (ms)",
+        "percentile(duration_ms,95.0)": "p95 (ms)",
+        "percentile(duration_ms,95)": "p95 (ms)",
+        "avg(hits)": "Hits medios",
+    }.get(fn, fn)
 
 
 def series_sum(field: str) -> dict:
-    return {"type": "sum", "id": f"sum({field})", "field": field}
+    fn = f"sum({field})"
+    return {"type": "sum", "id": series_label(fn), "field": field}
 
 
-def series_count(name: str = "count()") -> dict:
-    return {"type": "count", "id": name, "field": None}
+def series_count(_name: str = "count()") -> dict:
+    return {"type": "count", "id": series_label("count()"), "field": None}
 
 
 def series_avg(field: str) -> dict:
-    return {"type": "avg", "id": f"avg({field})", "field": field}
+    fn = f"avg({field})"
+    return {"type": "avg", "id": series_label(fn), "field": field}
 
 
 def series_max(field: str) -> dict:
-    return {"type": "max", "id": f"max({field})", "field": field}
+    fn = f"max({field})"
+    return {"type": "max", "id": series_label(fn), "field": field}
+
+
+def series_p95(field: str = "duration_ms") -> dict:
+    # Graylog literal: percentile(field,95.0) — id = rótulo do widget
+    fn = f"percentile({field},95.0)"
+    return {
+        "type": "percentile",
+        "id": series_label(fn),
+        "field": field,
+        "percentile": 95.0,
+    }
 
 
 def series_card(field: str) -> dict:
-    return {"type": "card", "id": f"card({field})", "field": field}
+    fn = f"card({field})"
+    return {"type": "card", "id": series_label(fn), "field": field}
+
+
+# Séries padrão de latência + volume (ids = rótulos do DataTable)
+LAT_SERIES = [
+    series_count(),
+    series_avg("duration_ms"),
+    series_max("duration_ms"),
+    series_p95("duration_ms"),
+]
+LAT_FNS = [
+    "count()",
+    "avg(duration_ms)",
+    "max(duration_ms)",
+    "percentile(duration_ms,95.0)",
+]
+COUNT_SERIES_ID = series_label("count()")
 
 
 def time_group() -> dict:
@@ -217,9 +573,10 @@ def time_group() -> dict:
 
 
 def values_group(field: str, limit: int = 15) -> dict:
+    # Search-type Graylog: "field" singular (não "fields") — evita métricas em branco na UI.
     return {
         "type": "values",
-        "fields": [field],
+        "field": field,
         "limit": limit,
         "skip_empty_values": True,
     }
@@ -241,16 +598,21 @@ def pivot_search_type(
     column_groups: list[dict] | None = None,
     rollup: bool = True,
     sort_count_desc: bool = False,
+    query: str | None = None,
 ) -> dict:
     sort = []
     if sort_count_desc:
-        sort = [{"type": "series", "field": "count()", "direction": "Descending"}]
+        # field = series id (= effectiveName / rótulo), não a function string
+        sort = [{"type": "series", "field": COUNT_SERIES_ID, "direction": "Descending"}]
+    # IMPORTANTE: query no search_type — se ficar null a UI do Graylog
+    # executa só o query da aba "ativa"/global e pode listar todos os endpoints.
+    q = {"type": "elasticsearch", "query_string": query} if query else None
     return {
         "id": st_id,
         "type": "pivot",
         "name": "chart",
         "timerange": {"type": "relative", "range": RANGE},
-        "query": None,
+        "query": q,
         "streams": [],
         "stream_categories": [],
         "series": series,
@@ -263,12 +625,13 @@ def pivot_search_type(
     }
 
 
-def messages_search_type(st_id: str, limit: int = 25) -> dict:
+def messages_search_type(st_id: str, limit: int = 25, query: str | None = None) -> dict:
+    q = {"type": "elasticsearch", "query_string": query} if query else None
     return {
         "id": st_id,
         "type": "messages",
         "timerange": {"type": "relative", "range": RANGE},
-        "query": None,
+        "query": q,
         "streams": [],
         "stream_categories": [],
         "limit": limit,
@@ -303,7 +666,9 @@ def agg_widget(
         "config": {
             "row_pivots": row_pivots or [],
             "column_pivots": column_pivots or [],
-            "series": [{"config": {"name": fn, "thresholds": []}, "function": fn} for fn in series_fns],
+            "series": [
+                {"config": {"name": series_label(fn), "thresholds": []}, "function": fn} for fn in series_fns
+            ],
             "sort": [],
             "visualization": visualization,
             "visualization_config": viz_config,
@@ -408,9 +773,40 @@ class TabBuilder:
                 column_groups=column_groups,
                 rollup=rollup,
                 sort_count_desc=sort_count_desc,
+                query=q,
             )
         )
         self.mapping[wid] = [stid]
+        self.titles[wid] = title
+        self._place(wid, col, width, height)
+
+    def add_text(
+        self,
+        title: str,
+        text: str,
+        *,
+        col: int = 1,
+        width: int | str = "Infinity",
+        height: int = 3,
+    ) -> None:
+        """Widget Text/Markdown — sem search type (lista estática)."""
+        wid = uid()
+        self.widgets.append(
+            {
+                "id": wid,
+                "type": "text",
+                "filter": None,
+                "filters": [],
+                "timerange": None,
+                "query": None,
+                "streams": [],
+                "stream_categories": [],
+                "config": {"text": text},
+                "description": None,
+                "context": None,
+            }
+        )
+        self.mapping[wid] = []
         self.titles[wid] = title
         self._place(wid, col, width, height)
 
@@ -427,7 +823,7 @@ class TabBuilder:
     ) -> None:
         wid, stid = uid(), uid()
         self.widgets.append(messages_widget(wid, query=query, fields=fields))
-        self.search_types.append(messages_search_type(stid, limit=limit))
+        self.search_types.append(messages_search_type(stid, limit=limit, query=query))
         self.mapping[wid] = [stid]
         self.titles[wid] = title
         self._place(wid, col, width, height)
@@ -471,7 +867,7 @@ def fill_overview(tab: TabBuilder) -> None:
         height=2,
     )
     tab.add_agg(
-        "Total vendido — R$ (GMV)",
+        "Total vendido (R$)",
         query=f"{sales} AND _exists_:amount",
         visualization="numeric",
         series=[series_sum("amount")],
@@ -545,6 +941,9 @@ def fill_overview(tab: TabBuilder) -> None:
     )
     tab.next_row(2)
 
+    # --- Latência / vazão (topo, visível) ---
+    add_latency_vazao_strip(tab, "service:assistente*")
+
     # --- Funil ---
     tab.add_agg(
         "Funil · etapas da jornada (count)",
@@ -560,6 +959,21 @@ def fill_overview(tab: TabBuilder) -> None:
         sort_count_desc=True,
     )
     tab.add_agg(
+        "Funil · latência por etapa (média/máx/p95)",
+        query="journey_step:sale.* AND service:assistente* AND _exists_:duration_ms",
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("journey_step", 15)],
+        row_pivots=[values_pivot("journey_step", 15)],
+        col=7,
+        width=6,
+        height=4,
+        sort_count_desc=True,
+    )
+    tab.next_row(4)
+
+    tab.add_agg(
         "Funil · biz_event de negócio",
         query=(
             "biz_event:(product_search OR plan_simulated OR sale_created OR "
@@ -568,6 +982,22 @@ def fill_overview(tab: TabBuilder) -> None:
         visualization="bar",
         series=[series_count()],
         series_fns=["count()"],
+        row_groups=[values_group("biz_event", 12)],
+        row_pivots=[values_pivot("biz_event", 12)],
+        col=1,
+        width=6,
+        height=4,
+        sort_count_desc=True,
+    )
+    tab.add_agg(
+        "Funil · latência por biz_event",
+        query=(
+            "biz_event:(product_search OR plan_simulated OR sale_created OR "
+            "proposal_created OR proposal_integrated OR cp_created) AND _exists_:duration_ms"
+        ),
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
         row_groups=[values_group("biz_event", 12)],
         row_pivots=[values_pivot("biz_event", 12)],
         col=7,
@@ -579,15 +1009,32 @@ def fill_overview(tab: TabBuilder) -> None:
 
     # --- Call-chain CDC/CDCI cross-domínio ---
     tab.add_agg(
-        "Call-chain CDC/CDCI · volume + latência por endpoint",
-        query=f"({CALL_CHAIN_PATHS}) AND service:assistente*",
+        "Call-chain CDC/CDCI · vazão + média + máx + p95",
+        query=f"({CALL_CHAIN_PATHS}) AND service:assistente* AND _exists_:duration_ms",
         visualization="table",
-        series=[series_count(), series_avg("duration_ms"), series_max("duration_ms")],
-        series_fns=["count()", "avg(duration_ms)", "max(duration_ms)"],
-        row_groups=[values_group("http_path", 15)],
-        row_pivots=[values_pivot("http_path", 15)],
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("http_path", 20)],
+        row_pivots=[values_pivot("http_path", 20)],
+        col=1,
+        width=6,
         height=5,
         sort_count_desc=True,
+        rollup=False,
+    )
+    tab.add_agg(
+        "Call-chain · vazão no tempo ≈ TPS",
+        query=f"({CALL_CHAIN_PATHS}) AND service:assistente*",
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        row_pivots=[time_pivot()],
+        col=7,
+        width=6,
+        height=5,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
     )
     tab.next_row(5)
 
@@ -669,7 +1116,7 @@ def fill_overview(tab: TabBuilder) -> None:
         sort_count_desc=True,
     )
     tab.add_agg(
-        "Meios: qtd + Total vendido (R$)",
+        "Meios: qtd + valores em R$",
         query=f"{sales} AND _exists_:payment_method AND _exists_:amount",
         visualization="table",
         series=[series_count(), series_sum("amount"), series_avg("amount")],
@@ -700,7 +1147,7 @@ def fill_overview(tab: TabBuilder) -> None:
     tab.next_row(3)
 
     tab.add_agg(
-        "Planos: qtd + Total vendido (R$)",
+        "Planos: qtd + valores em R$",
         query=f'{sales} AND _exists_:plan_name AND NOT plan_name:""',
         visualization="table",
         series=[series_count(), series_sum("amount"), series_avg("amount")],
@@ -728,7 +1175,7 @@ def fill_overview(tab: TabBuilder) -> None:
     tab.next_row(4)
 
     tab.add_agg(
-        "Categorias: qtd + Total vendido (R$)",
+        "Categorias: qtd + valores em R$",
         query=f'{sales} AND product_category:* AND NOT product_category:""',
         visualization="table",
         series=[series_count(), series_sum("amount"), series_avg("amount")],
@@ -756,7 +1203,7 @@ def fill_overview(tab: TabBuilder) -> None:
     tab.next_row(3)
 
     tab.add_agg(
-        "Top SKU por Total vendido (R$)",
+        "Top SKU por valor (R$)",
         query=f"{sales} AND _exists_:product_name",
         visualization="table",
         series=[series_sum("amount"), series_count(), series_avg("amount")],
@@ -769,7 +1216,7 @@ def fill_overview(tab: TabBuilder) -> None:
         sort_count_desc=True,
     )
     tab.add_agg(
-        "Vendas / Total vendido por vendedor",
+        "Vendas / valor (R$) por vendedor",
         query=f"{sales} AND _exists_:staff_id",
         visualization="table",
         series=[series_count(), series_sum("amount")],
@@ -805,11 +1252,27 @@ def fill_overview(tab: TabBuilder) -> None:
         row_groups=[values_group("product_type", 8)],
         row_pivots=[values_pivot("product_type", 8)],
         col=7,
-        width=6,
+        width=3,
+        height=3,
+        sort_count_desc=True,
+    )
+    tab.add_agg(
+        "Sem estoque (InsufficientStock)",
+        query="error_type:InsufficientStock",
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[values_group("item_id", 10)],
+        row_pivots=[values_pivot("item_id", 10)],
+        col=10,
+        width=3,
         height=3,
         sort_count_desc=True,
     )
     tab.next_row(3)
+
+    # --- Erros (negócio tipado + HTTP) ---
+    add_error_widgets(tab, scope="service:assistente*", full=True)
 
     tab.add_messages(
         "Últimas vendas",
@@ -852,88 +1315,316 @@ def fill_overview(tab: TabBuilder) -> None:
     )
 
 
-def add_domain_routes(tab: TabBuilder, key: str) -> None:
-    """Tabela com o conjunto de requisições (http_path) desta funcionalidade."""
-    q = tab.base_query
-    routes_hint = DOMAIN_ROUTES.get(key, "")
-    title = f"Rotas desta funcionalidade · {routes_hint}" if routes_hint else "Rotas desta funcionalidade"
+def add_error_widgets(tab: TabBuilder, *, scope: str, full: bool = False) -> None:
+    """Widgets de erro tipado (error_type) e HTTP (>=400)."""
+    base = f"({scope}) AND {ERR_ANY}"
+    typed = f"({scope}) AND ({ERR_TYPED})"
+    http_err = f"({scope}) AND ({ERR_HTTP})"
+
     tab.add_agg(
-        title[:120],
-        query=f"({q}) AND _exists_:http_path AND _exists_:duration_ms",
-        visualization="table",
-        series=[series_count(), series_avg("duration_ms"), series_max("duration_ms")],
-        series_fns=["count()", "avg(duration_ms)", "max(duration_ms)"],
-        row_groups=[values_group("http_path", 20)],
-        row_pivots=[values_pivot("http_path", 20)],
-        height=3,
+        "Erros tipados (qtd)",
+        query=typed,
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=1,
+        width=3,
+        height=2,
+    )
+    tab.add_agg(
+        "HTTP 4xx/5xx (qtd)",
+        query=http_err,
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=4,
+        width=3,
+        height=2,
+    )
+    tab.add_agg(
+        "HTTP 5xx (qtd)",
+        query=f"({scope}) AND http_status:>=500",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=7,
+        width=3,
+        height=2,
+    )
+    tab.add_agg(
+        "Crédito negado (qtd)",
+        query=f"({scope}) AND error_type:CreditNotApproved",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=10,
+        width=3,
+        height=2,
+    )
+    tab.next_row(2)
+    if full:
+        tab.add_agg(
+            "InsufficientStock (qtd)",
+            query=f"({scope}) AND error_type:InsufficientStock",
+            visualization="numeric",
+            series=[series_count()],
+            series_fns=["count()"],
+            col=1,
+            width=3,
+            height=2,
+        )
+        tab.add_agg(
+            "InsufficientStock por SKU",
+            query=f"({scope}) AND error_type:InsufficientStock",
+            visualization="bar",
+            series=[series_count()],
+            series_fns=["count()"],
+            row_groups=[values_group("item_id", 10)],
+            row_pivots=[values_pivot("item_id", 10)],
+            col=4,
+            width=9,
+            height=2,
+            sort_count_desc=True,
+        )
+        tab.next_row(2)
+
+    tab.add_agg(
+        "Erros por error_type",
+        query=typed,
+        visualization="pie" if not full else "table",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[values_group("error_type", 15)],
+        row_pivots=[values_pivot("error_type", 15)],
+        col=1,
+        width=6 if full else 6,
+        height=3 if not full else 4,
         sort_count_desc=True,
     )
-    tab.next_row(3)
+    tab.add_agg(
+        "Erros por status HTTP",
+        query=http_err,
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[values_group("http_status", 10)],
+        row_pivots=[values_pivot("http_status", 10)],
+        col=7,
+        width=6,
+        height=3 if not full else 4,
+        sort_count_desc=True,
+    )
+    tab.next_row(4 if full else 3)
+
+    if full:
+        tab.add_agg(
+            "Erros por domínio (lab_domain)",
+            query=f"{base} AND _exists_:lab_domain",
+            visualization="bar",
+            series=[series_count()],
+            series_fns=["count()"],
+            row_groups=[values_group("lab_domain", 12)],
+            row_pivots=[values_pivot("lab_domain", 12)],
+            col=1,
+            width=6,
+            height=3,
+            sort_count_desc=True,
+        )
+        tab.add_agg(
+            "Erros por endpoint (http_path)",
+            query=f"{base} AND _exists_:http_path",
+            visualization="table",
+            series=[series_count()],
+            series_fns=["count()"],
+            row_groups=[values_group("http_path", 15)],
+            row_pivots=[values_pivot("http_path", 15)],
+            col=7,
+            width=6,
+            height=3,
+            sort_count_desc=True,
+        )
+        tab.next_row(3)
+
+    tab.add_messages(
+        "Últimos erros",
+        query=base,
+        fields=[
+            "timestamp",
+            "error_type",
+            "http_status",
+            "lab_domain",
+            "http_method",
+            "http_route",
+            "http_path",
+            "journey_step",
+            "message",
+        ],
+        height=4,
+    )
+    tab.next_row(4)
 
 
 def fill_performance(tab: TabBuilder) -> None:
+    scope = "service:assistente* AND _exists_:duration_ms"
+
+    # KPIs gerais
     tab.add_agg(
-        "Latência média por domínio (ms)",
-        query="service:assistente* AND _exists_:duration_ms AND _exists_:lab_domain",
-        visualization="table",
-        series=[series_avg("duration_ms"), series_max("duration_ms"), series_count()],
-        series_fns=["avg(duration_ms)", "max(duration_ms)", "count()"],
-        row_groups=[values_group("lab_domain", 12)],
-        row_pivots=[values_pivot("lab_domain", 12)],
+        "Req (janela)",
+        query="service:assistente*",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=1,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Latência média (ms)",
+        query=scope,
+        visualization="numeric",
+        series=[series_avg("duration_ms")],
+        series_fns=["avg(duration_ms)"],
+        col=3,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Latência máx (ms)",
+        query=scope,
+        visualization="numeric",
+        series=[series_max("duration_ms")],
+        series_fns=["max(duration_ms)"],
+        col=5,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Latência p95 (ms)",
+        query=scope,
+        visualization="numeric",
+        series=[series_p95()],
+        series_fns=["percentile(duration_ms,95.0)"],
+        col=7,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "Erros tipados",
+        query=f"service:assistente* AND ({ERR_TYPED})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=9,
+        width=2,
+        height=2,
+    )
+    tab.add_agg(
+        "HTTP 4xx/5xx",
+        query=f"service:assistente* AND ({ERR_HTTP})",
+        visualization="numeric",
+        series=[series_count()],
+        series_fns=["count()"],
+        col=11,
+        width=2,
+        height=2,
+    )
+    tab.next_row(2)
+
+    # Vazão geral + por domínio
+    tab.add_agg(
+        "Vazão geral (req no tempo) ≈ TPS visual",
+        query="service:assistente*",
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        row_pivots=[time_pivot()],
         height=3,
-        sort_count_desc=True,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
     )
     tab.next_row(3)
 
     tab.add_agg(
-        "Endpoints mais lentos (avg ms)",
-        query="service:assistente* AND _exists_:duration_ms AND _exists_:http_path",
+        "Vazão por domínio (req no tempo)",
+        query="service:assistente* AND _exists_:lab_domain",
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        column_groups=[values_group("lab_domain", 12)],
+        row_pivots=[time_pivot()],
+        column_pivots=[values_pivot("lab_domain", 12)],
+        height=4,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
+    )
+    tab.next_row(4)
+
+    tab.add_agg(
+        "Domínio · qtd + média + máx + p95 (ms)",
+        query=f"{scope} AND _exists_:lab_domain",
         visualization="table",
-        series=[series_avg("duration_ms"), series_max("duration_ms"), series_count()],
-        series_fns=["avg(duration_ms)", "max(duration_ms)", "count()"],
-        row_groups=[values_group("http_path", 20)],
-        row_pivots=[values_pivot("http_path", 20)],
-        col=1,
-        width=6,
-        height=5,
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("lab_domain", 12)],
+        row_pivots=[values_pivot("lab_domain", 12)],
+        height=4,
         sort_count_desc=True,
     )
+    tab.next_row(4)
+
     tab.add_agg(
-        "Latência por etapa (journey_step)",
-        query="service:assistente* AND journey_step:sale.* AND _exists_:duration_ms",
+        "Endpoint · qtd + média + máx + p95 (ms)",
+        query=f"{scope} AND _exists_:http_path",
         visualization="table",
-        series=[series_avg("duration_ms"), series_max("duration_ms"), series_count()],
-        series_fns=["avg(duration_ms)", "max(duration_ms)", "count()"],
-        row_groups=[values_group("journey_step", 15)],
-        row_pivots=[values_pivot("journey_step", 15)],
-        col=7,
-        width=6,
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("http_path", 25)],
+        row_pivots=[values_pivot("http_path", 25)],
         height=5,
         sort_count_desc=True,
+        rollup=False,
     )
     tab.next_row(5)
 
     tab.add_agg(
-        "Latência por biz_event",
-        query="service:assistente* AND _exists_:biz_event AND _exists_:duration_ms",
+        "Vazão por endpoint (req no tempo)",
+        query="service:assistente* AND _exists_:http_path",
+        visualization="bar",
+        series=[series_count()],
+        series_fns=["count()"],
+        row_groups=[time_group()],
+        column_groups=[values_group("http_path", 12)],
+        row_pivots=[time_pivot()],
+        column_pivots=[values_pivot("http_path", 12)],
+        height=4,
+        viz_config={"barmode": "stack", "axis_type": "linear"},
+        rollup=False,
+    )
+    tab.next_row(4)
+
+    tab.add_agg(
+        "Latência por etapa (journey_step)",
+        query="service:assistente* AND journey_step:sale.* AND _exists_:duration_ms",
         visualization="table",
-        series=[series_avg("duration_ms"), series_max("duration_ms"), series_count()],
-        series_fns=["avg(duration_ms)", "max(duration_ms)", "count()"],
-        row_groups=[values_group("biz_event", 15)],
-        row_pivots=[values_pivot("biz_event", 15)],
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("journey_step", 15)],
+        row_pivots=[values_pivot("journey_step", 15)],
         col=1,
         width=6,
         height=4,
         sort_count_desc=True,
     )
     tab.add_agg(
-        "Tempo da pré-venda por meio (ms)",
-        query=f"{SALES_Q} AND _exists_:payment_method AND _exists_:duration_ms",
+        "Latência por biz_event",
+        query="service:assistente* AND _exists_:biz_event AND _exists_:duration_ms",
         visualization="table",
-        series=[series_avg("duration_ms"), series_max("duration_ms"), series_count()],
-        series_fns=["avg(duration_ms)", "max(duration_ms)", "count()"],
-        row_groups=[values_group("payment_method", 10)],
-        row_pivots=[values_pivot("payment_method", 10)],
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("biz_event", 15)],
+        row_pivots=[values_pivot("biz_event", 15)],
         col=7,
         width=6,
         height=4,
@@ -942,17 +1633,32 @@ def fill_performance(tab: TabBuilder) -> None:
     tab.next_row(4)
 
     tab.add_agg(
-        "Call-chain · latência (avg ms)",
-        query=f"({CALL_CHAIN_PATHS}) AND service:assistente* AND _exists_:duration_ms",
-        visualization="bar",
-        series=[series_avg("duration_ms")],
-        series_fns=["avg(duration_ms)"],
-        row_groups=[values_group("http_path", 12)],
-        row_pivots=[values_pivot("http_path", 12)],
-        height=4,
+        "Pré-venda · latência por meio (ms)",
+        query=f"{SALES_Q} AND _exists_:payment_method AND _exists_:duration_ms",
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("payment_method", 10)],
+        row_pivots=[values_pivot("payment_method", 10)],
+        col=1,
+        width=6,
+        height=3,
         sort_count_desc=True,
     )
-    tab.next_row(4)
+    tab.add_agg(
+        "Call-chain · qtd + média + máx + p95",
+        query=f"({CALL_CHAIN_PATHS}) AND service:assistente* AND _exists_:duration_ms",
+        visualization="table",
+        series=LAT_SERIES,
+        series_fns=LAT_FNS,
+        row_groups=[values_group("http_path", 15)],
+        row_pivots=[values_pivot("http_path", 15)],
+        col=7,
+        width=6,
+        height=3,
+        sort_count_desc=True,
+    )
+    tab.next_row(3)
 
     tab.add_messages(
         "Requests lentos (>200ms)",
@@ -961,22 +1667,28 @@ def fill_performance(tab: TabBuilder) -> None:
             "timestamp",
             "duration_ms",
             "lab_domain",
+            "http_route",
             "http_path",
             "journey_step",
             "biz_event",
             "payment_method",
             "http_status",
+            "error_type",
             "message",
         ],
         height=5,
     )
+    tab.next_row(5)
+    add_error_widgets(tab, scope="service:assistente*", full=False)
 
 
 def fill_domain(tab: TabBuilder, key: str) -> None:
-    q = tab.base_query
-    sales = f"({q}) AND {SALES_Q}"
+    # Inventário fixo da funcionalidade — nunca lab_domain “aberto”
+    q = domain_calls_query(key)
+    sales = f"service:assistente* AND {SALES_Q}"
 
     add_domain_routes(tab, key)
+    add_error_widgets(tab, scope=f"({q})", full=False)
 
     if key == "pagamento":
         tab.add_agg(
@@ -1039,11 +1751,11 @@ def fill_domain(tab: TabBuilder, key: str) -> None:
             height=2,
         )
         tab.add_agg(
-            "Latência BatchSimulate (ms)",
+            "Latência BatchSimulate (média / máx / p95)",
             query=f"({q}) AND http_path:\\/InstallmentSimulator\\/api\\/InstallmentSimulator\\/BatchSimulate AND _exists_:duration_ms",
             visualization="numeric",
-            series=[series_avg("duration_ms")],
-            series_fns=["avg(duration_ms)"],
+            series=[series_avg("duration_ms"), series_max("duration_ms"), series_p95()],
+            series_fns=["avg(duration_ms)", "max(duration_ms)", "percentile(duration_ms,95.0)"],
             col=9,
             width=4,
             height=2,
@@ -1072,7 +1784,7 @@ def fill_domain(tab: TabBuilder, key: str) -> None:
             sort_count_desc=True,
         )
         tab.add_agg(
-            "Meios: qtd + Total vendido (R$)",
+            "Meios: qtd + valores em R$",
             query=f"{sales} AND _exists_:payment_method AND _exists_:amount",
             visualization="table",
             series=[series_count(), series_sum("amount"), series_avg("amount")],
@@ -1165,6 +1877,30 @@ def fill_domain(tab: TabBuilder, key: str) -> None:
             sort_count_desc=True,
         )
         tab.next_row(4)
+        tab.add_agg(
+            "Sem estoque (InsufficientStock)",
+            query="error_type:InsufficientStock",
+            visualization="numeric",
+            series=[series_count()],
+            series_fns=["count()"],
+            col=1,
+            width=4,
+            height=2,
+        )
+        tab.add_agg(
+            "InsufficientStock por SKU",
+            query="error_type:InsufficientStock",
+            visualization="bar",
+            series=[series_count()],
+            series_fns=["count()"],
+            row_groups=[values_group("item_id", 10)],
+            row_pivots=[values_pivot("item_id", 10)],
+            col=5,
+            width=8,
+            height=2,
+            sort_count_desc=True,
+        )
+        tab.next_row(2)
         tab.add_messages(
             "Pré-vendas recentes",
             query=sales,
@@ -1276,11 +2012,11 @@ def fill_domain(tab: TabBuilder, key: str) -> None:
             height=2,
         )
         tab.add_agg(
-            "Latência integrar (ms)",
+            "Latência integrar (média / máx / p95)",
             query=f"({q}) AND {PROP_INTEGRATED_Q} AND _exists_:duration_ms",
             visualization="numeric",
-            series=[series_avg("duration_ms")],
-            series_fns=["avg(duration_ms)"],
+            series=[series_avg("duration_ms"), series_max("duration_ms"), series_p95()],
+            series_fns=["avg(duration_ms)", "max(duration_ms)", "percentile(duration_ms,95.0)"],
             col=10,
             width=3,
             height=2,
@@ -1493,6 +2229,30 @@ def fill_domain(tab: TabBuilder, key: str) -> None:
             series_fns=["count()"],
             row_groups=[values_group("item_id", 15)],
             row_pivots=[values_pivot("item_id", 15)],
+            col=1,
+            width=8,
+            height=3,
+            sort_count_desc=True,
+        )
+        tab.add_agg(
+            "InsufficientStock",
+            query="error_type:InsufficientStock",
+            visualization="numeric",
+            series=[series_count()],
+            series_fns=["count()"],
+            col=9,
+            width=4,
+            height=3,
+        )
+        tab.next_row(3)
+        tab.add_agg(
+            "Sem estoque por SKU",
+            query="error_type:InsufficientStock",
+            visualization="bar",
+            series=[series_count()],
+            series_fns=["count()"],
+            row_groups=[values_group("item_id", 10)],
+            row_pivots=[values_pivot("item_id", 10)],
             height=3,
             sort_count_desc=True,
         )
@@ -1703,20 +2463,21 @@ def main() -> int:
     print("==> Dashboard por funcionalidade (abas + Performance)", flush=True)
     tabs: list[TabBuilder] = []
     for key, label, blurb, path_fb in DOMAINS:
-        routes = DOMAIN_ROUTES.get(key, "")
-        tab = TabBuilder(label, domain_query(key, path_fb))
-        # description lives on dashboard; per-tab title carries blurb+routes via widget titles
+        tab = TabBuilder(label, domain_calls_query(key))
         fill_domain(tab, key)
         tabs.append(tab)
     perf = TabBuilder("Performance", "service:assistente*")
     fill_performance(perf)
     tabs.append(perf)
+    routes_doc = " | ".join(
+        f"{k}: " + " → ".join(v) for k, v in DOMAIN_ROUTES.items()
+    )
     id_domain = ensure_dashboard(
         DOMAIN_TITLE,
-        "Abas por domínio (rotas + KPIs) · aba Performance",
-        "Cada aba lista o conjunto de http_path da funcionalidade (count + latência) e os KPIs de negócio. "
-        "Aba Performance: latência por domínio/endpoint/etapa/meio. "
-        + " | ".join(f"{k}={v}" for k, v in DOMAIN_ROUTES.items()),
+        "Cada aba = só os endpoints daquela funcionalidade · aba Performance",
+        "Inventário fixo por aba (DOMAIN_ROUTES). Não lista tráfego de outras funcionalidades. "
+        "Vazão = count() no tempo (≈ TPS). Sequências: "
+        + routes_doc,
         tabs,
     )
 
