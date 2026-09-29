@@ -2468,7 +2468,7 @@ def main() -> int:
     id_overview = ensure_dashboard(
         OVERVIEW_TITLE,
         "KPIs, funil, call-chain CDC, mix e Total vendido (R$)",
-        "Visão de negócio do Assistente Colombo (lab). "
+        "Visão de negócio do Assistente de Vendas (lab). "
         "GMV = Total vendido em R$. biz_event = rótulo de evento de negócio no log. "
         "Call-chain CDC/CDCI: Authorize → FindByCpf → Limits → Search → FinancialConditions → "
         "BatchSimulate → CreatePreSales → Proposals → IntegrateProposal.",

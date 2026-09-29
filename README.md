@@ -1,10 +1,10 @@
 # ai-graylog
 
-Lab do **Assistente de Vendas** (UI no estilo Colombo) + observabilidade free.
+Lab do **Assistente de Vendas** + observabilidade free.
 
 ## O que é
 
-- App parecida com o Assistente Colombo: login, produtos, estoque, cliente, pré-venda, **CDC / CDCI / CP**, Monitor de Propostas, chat Lia
+- App de jornada de venda: login, produtos, estoque, cliente, pré-venda, **CDC / CDCI / CP**, Monitor de Propostas, chat Lia
 - **Postgres** (erros reais sob carga: pool/lock/estoque/limite de crédito)
 - **OpenTelemetry → Collector (spanmetrics) → Jaeger** + aba **Monitor (SPM)**
 - **Prometheus** (só backend de métricas RED para o Jaeger — sem Grafana)

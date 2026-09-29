@@ -1,4 +1,4 @@
--- Assistente de Vendas (lab) — schema estilo Colombo (CDC / CDCI / CP)
+-- Assistente de Vendas (lab) — schema de jornada CDC / CDCI / CP
 CREATE TABLE IF NOT EXISTS staff (
     staff_id    TEXT PRIMARY KEY,
     name        TEXT NOT NULL,

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Assistente de Vendas Lab API",
-    "description": "APIs do lab estilo Colombo Assistente — Authorize, produtos, estoque, cliente, CDC/CDCI, CP, pré-venda e chat Lia.",
+    "description": "APIs do lab Assistente de Vendas — Authorize, produtos, estoque, cliente, CDC/CDCI, CP, pré-venda e chat Lia.",
     "version": "1.0.0"
   },
   "servers": [{ "url": "/", "description": "Local / EC2" }],
